@@ -36,3 +36,5 @@ Symbolic execution for static vulnerability assessment in firmware
 ![Alt text](docs/images/bn-angr.png?raw=true "Angr binaryninja plugin UI")
 ![Alt text](docs/images/bn-angr2.png?raw=true "Angr binaryninja plugin UI")
 ![Alt text](docs/images/rop.png?raw=true "ROP exploitation example")
+![Alt text](docs/images/rop.png?raw=true "ROP stack example")
+![Alt text](docs/images/rop-stack.png?raw=true "ROP stack example")
