@@ -36,6 +36,28 @@ class Explorer(ABC):
     def explore(self):
         pass
 
+class MainExplorer(Explorer):
+
+    @abstractmethod
+    def run(self):
+        pass
+
+    @abstractmethod
+    def explore(self):
+        pass
+    
+    @abstractmethod
+    def feed_function_state(self):
+        pass
+    
+    @abstractmethod
+    def set_pointers(self):
+        pass
+    @abstractmethod
+    def set_sim_manager(self):
+        pass
+    
+   
 
 class UIPlugin():
 
@@ -105,7 +127,11 @@ class BackgroundTaskManager():
     @classmethod
     def vuln_explore(self, bv):
         self.init = cyclic(300).encode()
-        self.vulnerability_explorer = VulnerabilityExplorer(bv, self.init, 0x4703f0, 0x4706fc, ld_path='/home/horac/Research/firmware/WR941ND/fmk/rootfs/lib')
+        self.vulnerability_explorer = VulnerabilityExplorer(bv, 0x4703f0, 0x4706fc, ld_path='/home/horac/Research/firmware/WR941ND/fmk/rootfs/lib')
+        pointers = self.vulnerability_explorer.set_pointers(arg0=self.init)
+        state = self.vulnerability_explorer.feed_function_state(pointers['arg0'])
+        self.vulnerability_explorer.set_sim_manager(state)
+        self.vulnerability_explorer.check_buffer_overflow(self.init)
         self.runner = AngrRunner(bv, self.vulnerability_explorer)
         self.runner.start()
 
@@ -124,8 +150,11 @@ class BackgroundTaskManager():
 
         self.init = b"A"*160 + b"BBBB" + \
             p32(self.gadget2, endian='big')+p32(self.gadget1, endian='big')
-        self.rop_explorer = ROPExplorer(bv, self.init, self.proj, 0x4703f0, 0x4706fc, first=self.gadget1, second=self.gadget2,
+        self.rop_explorer = ROPExplorer(bv, self.proj, 0x4703f0, 0x4706fc, first=self.gadget1, second=self.gadget2,
                                         third=self.gadget3, fourth=self.gadget4, fifth=self.gadget5, sixth=self.sleep)
+        pointers = self.rop_explorer.set_pointers(arg0=self.init)
+        state = self.rop_explorer.feed_function_state(pointers['arg0'])
+        self.rop_explorer.set_sim_manager(state)
         self.runner = AngrRunner(bv, self.rop_explorer)
         self.runner.start()
 
@@ -146,19 +175,16 @@ class BackgroundTaskManager():
         self.runner.cancel(bv)
 
 
-class VulnerabilityExplorer(Explorer):
-    def __init__(self, bv, init_payload, func_start_addr, func_end_addr, ld_path=None, use_system_libs=False):
+class VulnerabilityExplorer(MainExplorer):
+    def __init__(self, bv, func_start_addr, func_end_addr, ld_path=None, use_system_libs=False):
         self.bv = bv
         self.func_start_addr = func_start_addr
         self.func_end_addr = func_end_addr
         self.proj = angr.Project(self.bv.file.filename, ld_path=[
             ld_path ], use_system_libs=use_system_libs)
         self.cfg = self.proj.analyses.CFGFast(regions=[(self.func_start_addr, self.func_end_addr)])
-
-        self.init = init_payload
-        self.arg0 = angr.PointerWrapper(self.init)
-        self.state = self.proj.factory.call_state(self.func_start_addr, self.arg0)
-        self.simgr = self.proj.factory.simgr(self.state)
+        self.pointers = {}
+        self.init = None
 
         self.proj.hook(self.func_end_addr, self.explore)
     
@@ -176,7 +202,25 @@ class VulnerabilityExplorer(Explorer):
             print(sm.found)
             found = sm.found[0]
             print("found", found)
-            self.identify_overflow(found, registers)
+            if self.init:
+                self.identify_overflow(found, registers)
+
+    def set_pointers(self, **pointers):
+        if pointers is not None:
+            for key, value in pointers.items():
+                self.pointers[key] = angr.PointerWrapper(value)
+        return self.pointers
+
+    def feed_function_state(self, pointers=None, data=None):
+        self.state = self.proj.factory.call_state(self.func_start_addr, pointers)
+        return self.state
+    
+    def set_sim_manager(self, state):
+         self.simgr = self.proj.factory.simgr(self.state)
+
+    def check_buffer_overflow(self, payload):
+        if payload:
+            self.init = payload
 
     def identify_overflow(self, found, registers=[], silence=True, *exclude):
         data = []
@@ -218,14 +262,15 @@ class VulnerabilityExplorer(Explorer):
         return contents
 
 
-class ROPExplorer(Explorer):
-    def __init__(self, bv, init_payload, project, func_start_addr, func_end_addr, **kwargs):
+class ROPExplorer(MainExplorer):
+    def __init__(self, bv, project, func_start_addr, func_end_addr, **kwargs):
         self.bv = bv
         self.func_start_addr = func_start_addr
         self.func_end_addr = func_end_addr
         self.proj = project
         self.proj.analyses.CFGFast(regions=[(self.func_start_addr, self.func_end_addr)])
-        self.init = init_payload
+        self.init = None
+        self.pointers={}
         self.gadget1 = kwargs['first']
         self.gadget2 = kwargs['second']
         self.gadget3 = kwargs['third']
@@ -234,9 +279,7 @@ class ROPExplorer(Explorer):
         self.sleep = kwargs['sixth']
         self.state_history = collections.OrderedDict()
         self.payload = collections.OrderedDict()
-        self.arg0 = angr.PointerWrapper(self.init)
-        self.state = self.proj.factory.call_state(self.func_start_addr, self.arg0)
-        self.simgr = self.proj.factory.simgr(self.state)
+    
         binja.log_info("Gadget 1 address: 0x{0:0x}".format(self.gadget1))
         binja.log_info("Gadget 2 address: 0x{0:0x}".format(self.gadget2))
         binja.log_info("Gadget 3 address: 0x{0:0x}".format(self.gadget3))
@@ -262,7 +305,20 @@ class ROPExplorer(Explorer):
         self.proj.hook(self.gadget3+16, self.hook_gadget3next16)
         self.proj.hook(self.gadget4, self.hook_gadget4)  # addiu $s0, $sp, 0x24
         self.proj.hook(self.gadget5+4, self.explore)  # jalr $t9
+     
+    def set_pointers(self, **pointers):
+        if pointers is not None:
+            for key, value in pointers.items():
+                self.pointers[key] = angr.PointerWrapper(value)
+        return self.pointers
 
+    def feed_function_state(self, pointers=None, data=None):
+        self.state = self.proj.factory.call_state(self.func_start_addr, pointers)
+        return self.state
+    
+    def set_sim_manager(self, state):
+         self.simgr = self.proj.factory.simgr(self.state)
+    
     def get_rop_report(self, state, data, gadget):
         contents = "==== 0x{0:0x} Registers ====\r\n\n".format(gadget)
         for reg in data:
