@@ -20,11 +20,11 @@ from pwn import *
 
 BinaryView.set_default_session_data("find_list", set())
 
-registers = ['a0', 'a1', 'a2', 'a3', 's0', 's1',
+registers = {"mips32": ['a0', 'a1', 'a2', 'a3', 's0', 's1',
              's2', 's3', 's4', 's5', 's6', 's7',
              't0', 't1', 't2', 't3', 't4', 't5',
              't6', 't7', 't8', 't9', 'v0', 'v1',
-             'sp', 'gp', 'pc', 'ra', 'fp']
+             'sp', 'gp', 'pc', 'ra', 'fp']}
 
 
 class Explorer(ABC):
@@ -192,7 +192,7 @@ class VulnerabilityExplorer(MainExplorer):
         UIPlugin.color_path(self.bv, state.solver.eval(
             state.regs.pc, cast_to=int))
         if state.solver.eval(state.regs.pc, cast_to=int) == self.func_end_addr:
-            UIPlugin.dump_regs(state, registers)
+            UIPlugin.dump_regs(state, registers[self.bv.arch.name])
             return True
 
     def run(self):
@@ -203,7 +203,7 @@ class VulnerabilityExplorer(MainExplorer):
             found = sm.found[0]
             print("found", found)
             if self.init:
-                self.identify_overflow(found, registers)
+                self.identify_overflow(found, registers[self.bv.arch.name])
 
     def set_pointers(self, **pointers):
         if pointers is not None:
@@ -304,8 +304,8 @@ class ROPExplorer(MainExplorer):
         # lw $s0, 0x18($sp)
         self.proj.hook(self.gadget3+16, self.hook_gadget3next16)
         self.proj.hook(self.gadget4, self.hook_gadget4)  # addiu $s0, $sp, 0x24
-        self.proj.hook(self.gadget5+4, self.explore)  # jalr $t9
-     
+        self.proj.hook(self.gadget5+4, self.explore)  # jalr $
+        
     def set_pointers(self, **pointers):
         if pointers is not None:
             for key, value in pointers.items():
@@ -436,22 +436,22 @@ class ROPExplorer(MainExplorer):
             print(sm.found)
             found = sm.found[0]
             print("found", found)
-            UIPlugin.dump_regs(found, registers)
+            UIPlugin.dump_regs(found, registers[self.bv.arch.name])
 
         # Generate raport for gadgets
 
             interaction.show_markdown_report("Initial State", self.get_rop_report(
-                self.state_history['init'], registers, self.func_end_addr))
+                self.state_history['init'], registers[self.bv.arch.name], self.func_end_addr))
             interaction.show_markdown_report("ROP Gadget 1", self.get_rop_report(
-                self.state_history[hex(self.gadget1)], registers, self.gadget1))
+                self.state_history[hex(self.gadget1)], registers[self.bv.arch.name], self.gadget1))
             interaction.show_markdown_report("ROP Gadget 2", self.get_rop_report(
-                self.state_history[hex(self.gadget2)], registers, self.gadget2))
+                self.state_history[hex(self.gadget2)], registers[self.bv.arch.name], self.gadget2))
             interaction.show_markdown_report("ROP Gadget 3", self.get_rop_report(
-                self.state_history[hex(self.gadget3)], registers, self.gadget3))
+                self.state_history[hex(self.gadget3)], registers[self.bv.arch.name], self.gadget3))
             interaction.show_markdown_report("ROP Gadget 4", self.get_rop_report(
-                self.state_history[hex(self.gadget4)], registers, self.gadget4))
+                self.state_history[hex(self.gadget4)], registers[self.bv.arch.name], self.gadget4))
             interaction.show_markdown_report("ROP Gadget 5", self.get_rop_report(
-                found, registers, found.solver.eval(found.regs.pc, cast_to=int)))
+                found, registers[self.bv.arch.name], found.solver.eval(found.regs.pc, cast_to=int)))
             self.state_history[hex(self.gadget5)] = found
 
             sortedDict = collections.OrderedDict(sorted(self.payload.items()))
