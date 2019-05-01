@@ -70,19 +70,31 @@ class UIPlugin(PluginCommand):
         super(UIPlugin, self).register("Explorer\WR941ND\End Address\Clear", "Clear end point address", self.clear_end_address)
         super(UIPlugin, self).register("Explorer\WR941ND\ROP\Shared Library\Select",
                        "Try to build exploit rop chain", self.choice_menu)
+        super(UIPlugin, self).register("Explorer\WR941ND\Library\Set LD_PATH","Add LD_PATH", self.set_ld_path)
         self.start = None
         self.end = None
 
+    def set_ld_path(self,bv):   
+        path = interaction.get_directory_name_input("Select LD_PATH")
+        if(not path):
+            return
+        binja.log_info("Selected LD_PATH: {0}".format(path))
+        bv.set_default_session_data("ld_path", path.decode())
+
     def choice_menu(self,bv):
-        proj = angr.Project(bv.file.filename, ld_path=[
-                '/home/horac/Research/firmware/WR941ND/fmk/rootfs/lib'], use_system_libs=False)
-        libs = list(proj.loader.shared_objects.keys())[1::]
-        mapped_libs = {}
-        for i in range(0, len(libs)):
-            mapped_libs[i] = libs[i]
-        selected = interaction.get_choice_input("Libraries", "project libraries", libs)
-        binja.log_info("Selected library {0}".format(mapped_libs[selected]))
-        bv.set_default_session_data("selected", mapped_libs[selected])
+        try:
+            proj = angr.Project(bv.file.filename, ld_path=[bv.session_data.ld_path], use_system_libs=False)
+            libs = list(proj.loader.shared_objects.keys())[1::]
+            mapped_libs = {}
+            for i in range(0, len(libs)):
+                mapped_libs[i] = libs[i]
+            selected = interaction.get_choice_input("Libraries", "project libraries", libs)
+            binja.log_info("Selected library {0}".format(mapped_libs[selected]))
+            bv.set_default_session_data("selected", mapped_libs[selected])
+        except KeyError as e:
+            UIPlugin.display_message('KeyException', "Missing definition of: {0}".format(str(e)))
+
+        
 
     @classmethod
     def dump_regs(self, state, registers, *include):
@@ -228,7 +240,7 @@ class BackgroundTaskManager():
             self.init = cyclic(300).encode()
             start_addr = bv.session_data.start_addr
             end_addr = bv.session_data.end_addr
-            self.vulnerability_explorer = VulnerabilityExplorer(bv, start_addr, end_addr, ld_path='/home/horac/Research/firmware/WR941ND/fmk/rootfs/lib')
+            self.vulnerability_explorer = VulnerabilityExplorer(bv, start_addr, end_addr, ld_path=bv.session_data.ld_path)
             pointers = self.vulnerability_explorer.set_pointers(arg0=self.init)
             state = self.vulnerability_explorer.feed_function_state(pointers['arg0'])
             self.vulnerability_explorer.set_sim_manager(state)
@@ -244,7 +256,7 @@ class BackgroundTaskManager():
             start_addr = bv.session_data.start_addr
             end_addr = bv.session_data.end_addr
             self.proj = angr.Project(bv.file.filename, ld_path=[
-                '/home/horac/Research/firmware/WR941ND/fmk/rootfs/lib'], use_system_libs=False)
+                bv.session_data.ld_path], use_system_libs=False)
             self.libc =  self.proj.loader.shared_objects[bv.session_data.selected]
             print("LIBC", self.libc)
             self.libc_base = self.libc.min_addr
