@@ -64,12 +64,27 @@ class MainExplorer(Explorer):
 class UIPlugin(PluginCommand):
 
     def __init__(self):
-        super(UIPlugin, self).register_for_address("Angr\WR941ND\Start Address\Set", "Set execution starting point address", self.set_start_address)
-        super(UIPlugin, self).register("Angr\WR941ND\Start Address\Clear", "Clear starting point address", self.clear_start_address)
-        super(UIPlugin, self).register_for_address("Angr\WR941ND\End Address\Set", "Set execution end address", self.set_end_address)
-        super(UIPlugin, self).register("Angr\WR941ND\End Address\Clear", "Clear end point address", self.clear_end_address)
+        super(UIPlugin, self).register_for_address("Explorer\WR941ND\Start Address\Set", "Set execution starting point address", self.set_start_address)
+        super(UIPlugin, self).register("Explorer\WR941ND\Start Address\Clear", "Clear starting point address", self.clear_start_address)
+        super(UIPlugin, self).register_for_address("Explorer\WR941ND\End Address\Set", "Set execution end address", self.set_end_address)
+        super(UIPlugin, self).register("Explorer\WR941ND\End Address\Clear", "Clear end point address", self.clear_end_address)
+        super(UIPlugin, self).register("Explorer\WR941ND\ROP\Shared Library\Select",
+                       "Try to build exploit rop chain", self.choice_menu)
         self.start = None
         self.end = None
+
+    def choice_menu(self,bv):
+        proj = angr.Project(bv.file.filename, ld_path=[
+                '/home/horac/Research/firmware/WR941ND/fmk/rootfs/lib'], use_system_libs=False)
+        libs = list(proj.loader.shared_objects.keys())[1::]
+        mapped_libs = {}
+        for i in range(0, len(libs)):
+            mapped_libs[i] = libs[i]
+        print("MAPPED LIBS", mapped_libs)
+        print("LIBS", libs)
+        selected = interaction.get_choice_input("Libraries", "project libraries", libs)
+        binja.log_info("Selected library {0}".format(mapped_libs[selected]))
+        bv.set_default_session_data("selected", mapped_libs[selected])
 
     @classmethod
     def dump_regs(self, state, registers, *include):
@@ -222,8 +237,8 @@ class BackgroundTaskManager():
             self.vulnerability_explorer.check_buffer_overflow(self.init)
             self.runner = AngrRunner(bv, self.vulnerability_explorer)
             self.runner.start()
-        except KeyError:
-            UIPlugin.display_message('Addresses', 'Start or End address are not set')
+        except KeyError as e:
+              UIPlugin.display_message('KeyException', "Missing definition of: {0}".format(str(e)))
 
     @classmethod
     def build_rop(self, bv):
@@ -232,7 +247,8 @@ class BackgroundTaskManager():
             end_addr = bv.session_data.end_addr
             self.proj = angr.Project(bv.file.filename, ld_path=[
                 '/home/horac/Research/firmware/WR941ND/fmk/rootfs/lib'], use_system_libs=False)
-            self.libc = self.proj.loader.shared_objects['libc.so.0']
+            self.libc =  self.proj.loader.shared_objects[bv.session_data.selected]
+            print("LIBC", self.libc)
             self.libc_base = self.libc.min_addr
             self.gadget1 = self.libc_base+0x00055c60
             self.gadget2 = self.libc_base+0x00024ecc
@@ -250,8 +266,8 @@ class BackgroundTaskManager():
             self.rop_explorer.set_sim_manager(state)
             self.runner = AngrRunner(bv, self.rop_explorer)
             self.runner.start()
-        except KeyError:
-             UIPlugin.display_message('Addresses', 'Start or End address are not set')
+        except KeyError as e:
+            UIPlugin.display_message('KeyException', "Missing definition of: {0}".format(str(e)))
 
     @classmethod
     def exploit_to_file(self, bv):
@@ -617,15 +633,15 @@ class JSONExploitCreator(Explorer):
 
 
 PluginCommand.register(
-    "Angr\WR941ND\Explore", "Attempt to solve for a path that satisfies the constraints given", BackgroundTaskManager.vuln_explore)
-PluginCommand.register("Angr\WR941ND\Build ROP",
+    "Explorer\WR941ND\Explore", "Attempt to solve for a path that satisfies the constraints given", BackgroundTaskManager.vuln_explore)
+PluginCommand.register("Explorer\WR941ND\ROP\Build",
                        "Try to build exploit rop chain", BackgroundTaskManager.build_rop)
-PluginCommand.register("Angr\WR941ND\Generate Exploit\Save as JSON",
+PluginCommand.register("Explorer\WR941ND\Generate Exploit\Save as JSON",
                        "Try to save exploit as JSON", BackgroundTaskManager.exploit_to_json)
-PluginCommand.register("Angr\WR941ND\Generate Exploit\Save to File",
+PluginCommand.register("Explorer\WR941ND\Generate Exploit\Save to File",
                        "Try to build exploit fom rop chain", BackgroundTaskManager.exploit_to_file)
 PluginCommand.register(
-    "Angr\WR941ND\Clear", "Clear angr path traversed blocks", BackgroundTaskManager.stop)
+    "Explorer\WR941ND\Clear", "Clear angr path traversed blocks", BackgroundTaskManager.stop)
 
 if __name__ == "__main__":
     pass
