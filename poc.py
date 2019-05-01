@@ -80,8 +80,6 @@ class UIPlugin(PluginCommand):
         mapped_libs = {}
         for i in range(0, len(libs)):
             mapped_libs[i] = libs[i]
-        print("MAPPED LIBS", mapped_libs)
-        print("LIBS", libs)
         selected = interaction.get_choice_input("Libraries", "project libraries", libs)
         binja.log_info("Selected library {0}".format(mapped_libs[selected]))
         bv.set_default_session_data("selected", mapped_libs[selected])
