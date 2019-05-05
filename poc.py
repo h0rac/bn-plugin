@@ -25,9 +25,10 @@ registers = {"mips32": ['a0', 'a1', 'a2', 'a3', 's0', 's1',
              't0', 't1', 't2', 't3', 't4', 't5',
              't6', 't7', 't8', 't9', 'v0', 'v1',
              'sp', 'gp', 'pc', 'ra', 'fp'],
-             "arm32": ['r0', 'r1', 'r2', 'r3', 'r4', 'r5',
+             "armv7": ['r0', 'r1', 'r2', 'r3', 'r4', 'r5',
              'r6', 'r7', 'r8', 'r9', 'r10', 'r11',
              'r12', 'lr', 'sp', 'pc']}
+
 
 class Explorer(ABC):
     @abstractmethod
@@ -38,63 +39,67 @@ class Explorer(ABC):
     def explore(self):
         pass
 
-class MainExplorer(Explorer):
 
-    @abstractmethod
-    def run(self):
-        pass
+class MainExplorer(Explorer):
 
     @abstractmethod
     def explore(self):
         pass
-    
+
     @abstractmethod
     def feed_function_state(self):
         pass
-    
+
     @abstractmethod
-    def set_pointers(self):
+    def set_args(self):
         pass
+
     @abstractmethod
     def set_sim_manager(self):
         pass
-    
-   
+
 
 class UIPlugin(PluginCommand):
 
     def __init__(self):
-        super(UIPlugin, self).register_for_address("Explorer\WR941ND\Start Address\Set", "Set execution starting point address", self.set_start_address)
-        super(UIPlugin, self).register("Explorer\WR941ND\Start Address\Clear", "Clear starting point address", self.clear_start_address)
-        super(UIPlugin, self).register_for_address("Explorer\WR941ND\End Address\Set", "Set execution end address", self.set_end_address)
-        super(UIPlugin, self).register("Explorer\WR941ND\End Address\Clear", "Clear end point address", self.clear_end_address)
+        super(UIPlugin, self).register_for_address("Explorer\WR941ND\Start Address\Set",
+              "Set execution starting point address", self.set_start_address)
+        super(UIPlugin, self).register("Explorer\WR941ND\Start Address\Clear",
+              "Clear starting point address", self.clear_start_address)
+        super(UIPlugin, self).register_for_address(
+            "Explorer\WR941ND\End Address\Set", "Set execution end address", self.set_end_address)
+        super(UIPlugin, self).register("Explorer\WR941ND\End Address\Clear",
+              "Clear end point address", self.clear_end_address)
         super(UIPlugin, self).register("Explorer\WR941ND\ROP\Shared Library\Select",
                        "Try to build exploit rop chain", self.choice_menu)
-        super(UIPlugin, self).register("Explorer\WR941ND\Library\Set LD_PATH","Add LD_PATH", self.set_ld_path)
+        super(UIPlugin, self).register(
+            "Explorer\WR941ND\Library\Set LD_PATH", "Add LD_PATH", self.set_ld_path)
         self.start = None
         self.end = None
 
-    def set_ld_path(self,bv):   
+    def set_ld_path(self, bv):
         path = interaction.get_directory_name_input("Select LD_PATH")
         if(not path):
             return
         binja.log_info("Selected LD_PATH: {0}".format(path))
         bv.set_default_session_data("ld_path", path.decode())
 
-    def choice_menu(self,bv):
+    def choice_menu(self, bv):
         try:
-            proj = angr.Project(bv.file.filename, ld_path=[bv.session_data.ld_path], use_system_libs=False)
+            proj = angr.Project(bv.file.filename, ld_path=[
+                                bv.session_data.ld_path], use_system_libs=False)
             libs = list(proj.loader.shared_objects.keys())[1::]
             mapped_libs = {}
             for i in range(0, len(libs)):
                 mapped_libs[i] = libs[i]
-            selected = interaction.get_choice_input("Libraries", "project libraries", libs)
-            binja.log_info("Selected library {0}".format(mapped_libs[selected]))
+            selected = interaction.get_choice_input(
+                "Libraries", "project libraries", libs)
+            binja.log_info("Selected library {0}".format(
+                mapped_libs[selected]))
             bv.set_default_session_data("selected", mapped_libs[selected])
         except KeyError as e:
-            UIPlugin.display_message('KeyException', "Missing definition of: {0}".format(str(e)))
-
-        
+            UIPlugin.display_message(
+                'KeyException', "Missing definition of: {0}".format(str(e)))
 
     @classmethod
     def dump_regs(self, state, registers, *include):
@@ -137,12 +142,12 @@ class UIPlugin(PluginCommand):
                     block.function.set_auto_instr_highlight(
                         addr, HighlightStandardColor.OrangeHighlightColor)
                     self.start = addr
-                    bv.set_default_session_data("start_addr",addr)
+                    bv.set_default_session_data("start_addr", addr)
                 else:
                     block.function.set_auto_instr_highlight(
                         addr, HighlightStandardColor.OrangeHighlightColor)
                     self.start = addr
-                    bv.set_default_session_data("start_addr",addr)
+                    bv.set_default_session_data("start_addr", addr)
             binja.log_info("Start: 0x%x" % addr)
         except:
             show_message_box("Afl-Unicorn", "Error please open git issue !",
@@ -186,7 +191,6 @@ class UIPlugin(PluginCommand):
             show_message_box("Plugin", "Error please open git issue !",
                                 MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.ErrorIcon)
 
-    
     def clear_end_address(self, bv):
         if self.end:
             end_block = bv.get_basic_blocks_at(self.end)
@@ -197,11 +201,12 @@ class UIPlugin(PluginCommand):
             show_message_box("Plugin", "End address not set !",
                                             MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
             return
-    
+
     @classmethod
     def display_message(self, title, desc):
           show_message_box(title, desc,
                                 MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
+
 
 class AngrRunner(BackgroundTaskThread):
     def __init__(self, bv, explorer):
@@ -240,15 +245,18 @@ class BackgroundTaskManager():
             self.init = cyclic(300).encode()
             start_addr = bv.session_data.start_addr
             end_addr = bv.session_data.end_addr
-            self.vulnerability_explorer = VulnerabilityExplorer(bv, start_addr, end_addr, ld_path=bv.session_data.ld_path)
-            pointers = self.vulnerability_explorer.set_pointers(arg0=self.init)
-            state = self.vulnerability_explorer.feed_function_state(pointers['arg0'])
+            self.vulnerability_explorer = VulnerabilityExplorer(
+                bv, start_addr, end_addr, ld_path=bv.session_data.ld_path)
+            args = self.vulnerability_explorer.set_args(
+                arg0={'key': self.init, 'key_type': 'pointer'})
+            state = self.vulnerability_explorer.feed_function_state(args)
             self.vulnerability_explorer.set_sim_manager(state)
             self.vulnerability_explorer.check_buffer_overflow(self.init)
             self.runner = AngrRunner(bv, self.vulnerability_explorer)
             self.runner.start()
         except KeyError as e:
-              UIPlugin.display_message('KeyException', "Missing definition of: {0}".format(str(e)))
+              UIPlugin.display_message(
+                  'KeyException', "Missing definition of: {0}".format(str(e)))
 
     @classmethod
     def build_rop(self, bv):
@@ -257,7 +265,7 @@ class BackgroundTaskManager():
             end_addr = bv.session_data.end_addr
             self.proj = angr.Project(bv.file.filename, ld_path=[
                 bv.session_data.ld_path], use_system_libs=False)
-            self.libc =  self.proj.loader.shared_objects[bv.session_data.selected]
+            self.libc = self.proj.loader.shared_objects[bv.session_data.selected]
             print("LIBC", self.libc)
             self.libc_base = self.libc.min_addr
             self.gadget1 = self.libc_base+0x00055c60
@@ -271,13 +279,15 @@ class BackgroundTaskManager():
                 p32(self.gadget2, endian='big')+p32(self.gadget1, endian='big')
             self.rop_explorer = ROPExplorer(bv, self.proj, start_addr, end_addr, first=self.gadget1, second=self.gadget2,
                                             third=self.gadget3, fourth=self.gadget4, fifth=self.gadget5, sixth=self.sleep)
-            pointers = self.rop_explorer.set_pointers(arg0=self.init)
-            state = self.rop_explorer.feed_function_state(pointers['arg0'])
+            args = self.rop_explorer.set_args(
+                arg0={'key': self.init, 'key_type': 'pointer'})
+            state = self.rop_explorer.feed_function_state(args)
             self.rop_explorer.set_sim_manager(state)
             self.runner = AngrRunner(bv, self.rop_explorer)
             self.runner.start()
         except KeyError as e:
-            UIPlugin.display_message('KeyException', "Missing definition of: {0}".format(str(e)))
+            UIPlugin.display_message(
+                'KeyException', "Missing definition of: {0}".format(str(e)))
 
     @classmethod
     def exploit_to_file(self, bv):
@@ -287,7 +297,8 @@ class BackgroundTaskManager():
 
     @classmethod
     def exploit_to_json(self, bv):
-        self.json_exploit_creator = JSONExploitCreator(bv, self.init, self.payload)
+        self.json_exploit_creator = JSONExploitCreator(
+            bv, self.init, self.payload)
         self.runner = AngrRunner(bv, self.json_exploit_creator)
         self.runner.start()
 
@@ -302,13 +313,14 @@ class VulnerabilityExplorer(MainExplorer):
         self.func_start_addr = func_start_addr
         self.func_end_addr = func_end_addr
         self.proj = angr.Project(self.bv.file.filename, ld_path=[
-            ld_path ], use_system_libs=use_system_libs)
-        self.cfg = self.proj.analyses.CFGFast(regions=[(self.func_start_addr, self.func_end_addr)])
-        self.pointers = {}
+            ld_path], use_system_libs=use_system_libs)
+        self.cfg = self.proj.analyses.CFGFast(
+            regions=[(self.func_start_addr, self.func_end_addr)])
+        self.args = {}
         self.init = None
 
         self.proj.hook(self.func_end_addr, self.explore)
-    
+
     def explore(self, state):
         UIPlugin.color_path(self.bv, state.solver.eval(
             state.regs.pc, cast_to=int))
@@ -326,14 +338,19 @@ class VulnerabilityExplorer(MainExplorer):
             if self.init:
                 self.identify_overflow(found, registers[self.bv.arch.name])
 
-    def set_pointers(self, **pointers):
-        if pointers is not None:
-            for key, value in pointers.items():
-                self.pointers[key] = angr.PointerWrapper(value)
-        return self.pointers
+    def set_args(self, **args):
+        if args is not None:
+            for key, value in args.items():
+                if(type(value) == dict):
+                    key_type = value.get('key_type')
+                    if key_type == 'pointer':
+                        self.args[key] = angr.PointerWrapper(value.get('key'))
+                else:
+                    self.args[key] = value
+        return self.args
 
-    def feed_function_state(self, pointers=None, data=None):
-        self.state = self.proj.factory.call_state(self.func_start_addr, pointers)
+    def feed_function_state(self, args=None, data=None):
+        self.state = self.proj.factory.call_state(self.func_start_addr, args['arg0'])
         return self.state
     
     def set_sim_manager(self, state):
@@ -391,7 +408,7 @@ class ROPExplorer(MainExplorer):
         self.proj = project
         self.proj.analyses.CFGFast(regions=[(self.func_start_addr, self.func_end_addr)])
         self.init = None
-        self.pointers={}
+        self.args={}
         self.gadget1 = kwargs['first']
         self.gadget2 = kwargs['second']
         self.gadget3 = kwargs['third']
@@ -427,14 +444,19 @@ class ROPExplorer(MainExplorer):
         self.proj.hook(self.gadget4, self.hook_gadget4)  # addiu $s0, $sp, 0x24
         self.proj.hook(self.gadget5+4, self.explore)  # jalr $
         
-    def set_pointers(self, **pointers):
-        if pointers is not None:
-            for key, value in pointers.items():
-                self.pointers[key] = angr.PointerWrapper(value)
-        return self.pointers
+    def set_args(self, **args):
+        if args is not None:
+            for key, value in args.items():
+                if(type(value) == dict):
+                    key_type = value.get('key_type')
+                    if key_type == 'pointer':
+                        self.args[key] = angr.PointerWrapper(value.get('key'))
+                else:
+                    self.args[key] = value
+        return self.args
 
-    def feed_function_state(self, pointers=None, data=None):
-        self.state = self.proj.factory.call_state(self.func_start_addr, pointers)
+    def feed_function_state(self, args=None, data=None):
+        self.state = self.proj.factory.call_state(self.func_start_addr, args['arg0'])
         return self.state
     
     def set_sim_manager(self, state):
