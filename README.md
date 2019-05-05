@@ -33,8 +33,15 @@ Symbolic execution for static vulnerability assessment in firmware
 
 ###### edit your .bashrc or .zshrc file with export PWNLIB_NOTERM=true
 
+
+![Alt text](docs/images/set_start.png?raw=true "Set execution start address")
+![Alt text](docs/images/set_end.png?raw=true "Set execution end address")
+![Alt text](docs/images/ld_path.png?raw=true "Set LD_PATH")
+![Alt text](docs/images/ld_path2.png?raw=true "Set LD_PATH details")
+![Alt text](docs/images/shared_lib.png?raw=true "Set Shared lib")
+![Alt text](docs/images/libraries.png?raw=true "Set libraries")
+![Alt text](docs/images/gen_exploit.png?raw=true "Exploit generation")
 ![Alt text](docs/images/bn-angr.png?raw=true "Angr binaryninja plugin UI")
 ![Alt text](docs/images/bn-angr2.png?raw=true "Angr binaryninja plugin UI")
 ![Alt text](docs/images/rop.png?raw=true "ROP exploitation example")
-![Alt text](docs/images/rop.png?raw=true "ROP stack example")
 ![Alt text](docs/images/rop-stack.png?raw=true "ROP stack example")
