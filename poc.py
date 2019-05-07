@@ -74,6 +74,8 @@ class UIPlugin(PluginCommand):
                        "Try to build exploit rop chain", self.choice_menu)
         super(UIPlugin, self).register(
             "Explorer\WR941ND\Library\Set LD_PATH", "Add LD_PATH", self.set_ld_path)
+        super(UIPlugin, self).register_for_address(
+            "Explorer\WR941ND\Function\Set Params","Add function params", self.set_function_params)
         self.start = None
         self.end = None
 
@@ -207,6 +209,42 @@ class UIPlugin(PluginCommand):
           show_message_box(title, desc,
                                 MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
 
+    def generate_menu_text_fields(self, size):
+        menu = ["Function Params"]
+        for i in range(0, size):
+             text_field = interaction.TextLineField("Param {0}".format(i))
+             choice_field = interaction.ChoiceField("Pointer", ["Yes", "No"])
+             menu.append(text_field)
+             menu.append(choice_field)
+        return menu
+
+    def get_menu_results(self, menu_items):
+        result = [x.result for x in menu_items]
+        return list(zip(result[0::2], result[1::2]))
+        
+    def convert_menu_results(self, results):
+        result_list = []
+        for key,value in results:
+            if value == 0:
+                result_list.append({'param':key, 'type': value})
+            else:
+                result_list.append({'param':key, 'type': value})
+        return result_list
+
+     
+    def set_function_params(self, bv, addr):
+        func = bv.get_function_at(addr)
+        if(type(func) != binja.function.Function):
+            self.display_message("Error", "This is not a function!" )
+        binja.log_info("Function has {0} params".format(len(func.parameter_vars)))
+        menu_items = self.generate_menu_text_fields(len(func.parameter_vars))
+        menu = interaction.get_form_input(menu_items, "Parameters")
+        if menu:
+            results = self.get_menu_results(menu_items[1::])
+            converted = self.convert_menu_results(results)
+            print("Converted params", converted)
+            bv.set_default_session_data("func_params", converted)
+
 
 class AngrRunner(BackgroundTaskThread):
     def __init__(self, bv, explorer):
@@ -242,16 +280,18 @@ class BackgroundTaskManager():
     @classmethod
     def vuln_explore(self, bv):
         try:
-            self.init = cyclic(300).encode()
             start_addr = bv.session_data.start_addr
             end_addr = bv.session_data.end_addr
             self.vulnerability_explorer = VulnerabilityExplorer(
                 bv, start_addr, end_addr, ld_path=bv.session_data.ld_path)
-            args = self.vulnerability_explorer.set_args(
-                arg0={'key': self.init, 'key_type': 'pointer'})
+            params = bv.session_data.func_params
+            binja.log_info("Session function params {0}".format(params))
+            args = self.vulnerability_explorer.set_args(params)
+            binja.log_info("Parameters pass to function {0}".format(args))
             state = self.vulnerability_explorer.feed_function_state(args)
             self.vulnerability_explorer.set_sim_manager(state)
-            self.vulnerability_explorer.check_buffer_overflow(self.init)
+            print("TEST", params[0].get('param'))
+            self.vulnerability_explorer.check_buffer_overflow(params[0].get('param'))
             self.runner = AngrRunner(bv, self.vulnerability_explorer)
             self.runner.start()
         except KeyError as e:
@@ -279,6 +319,7 @@ class BackgroundTaskManager():
                 p32(self.gadget2, endian='big')+p32(self.gadget1, endian='big')
             self.rop_explorer = ROPExplorer(bv, self.proj, start_addr, end_addr, first=self.gadget1, second=self.gadget2,
                                             third=self.gadget3, fourth=self.gadget4, fifth=self.gadget5, sixth=self.sleep)
+                                                                            
             args = self.rop_explorer.set_args(
                 arg0={'key': self.init, 'key_type': 'pointer'})
             state = self.rop_explorer.feed_function_state(args)
@@ -338,15 +379,15 @@ class VulnerabilityExplorer(MainExplorer):
             if self.init:
                 self.identify_overflow(found, registers[self.bv.arch.name])
 
-    def set_args(self, **args):
+    def set_args(self, args):
+        counter = 0
         if args is not None:
-            for key, value in args.items():
-                if(type(value) == dict):
-                    key_type = value.get('key_type')
-                    if key_type == 'pointer':
-                        self.args[key] = angr.PointerWrapper(value.get('key'))
+            for item in args:
+                if item['type'] == 0:
+                    self.args['arg'+str(counter)] = angr.PointerWrapper(item.get('param'))
                 else:
-                    self.args[key] = value
+                    self.args['arg'+str(counter)] = item.get('param')
+                counter +=1
         return self.args
 
     def feed_function_state(self, args=None, data=None):
@@ -359,6 +400,13 @@ class VulnerabilityExplorer(MainExplorer):
     def check_buffer_overflow(self, payload):
         if payload:
             self.init = payload
+    
+    def find_pattern(self, params, pattern):
+        for item in params:
+            dest = item.get('param').encode()
+            if pattern in dest:
+                return True
+        return False
 
     def identify_overflow(self, found, registers=[], silence=True, *exclude):
         data = []
@@ -368,17 +416,17 @@ class VulnerabilityExplorer(MainExplorer):
         else:
             data = registers
         for arg in data:
-            reg = found.solver.eval(found.regs.get(arg), cast_to=bytes)
-            if reg in self.init:
-                if(arg == 'ra' and cyclic_find(reg.decode())):
+            pattern = found.solver.eval(found.regs.get(arg), cast_to=bytes)
+            if self.find_pattern(self.bv.session_data.func_params, pattern):
+                if(arg == 'ra' and cyclic_find(pattern.decode())):
                     binja.log_warn("[*] Buffer overflow detected !!!")
                     binja.log_warn(
-                        "[*] We can control ${0} after {1} bytes !!!!".format(arg, cyclic_find(reg.decode())))
-                    report[arg] = cyclic_find(reg.decode())
+                        "[*] We can control ${0} after {1} bytes !!!!".format(arg, cyclic_find(pattern.decode())))
+                    report[arg] = cyclic_find(pattern.decode())
                 else:
                     binja.log_warn(
-                        "[+] Register ${0} overwritten after: {1} bytes".format(arg, cyclic_find(reg.decode())))
-                    report[arg] = cyclic_find(reg.decode())
+                        "[+] Register ${0} overwritten after: {1} bytes".format(arg, cyclic_find(pattern.decode())))
+                    report[arg] = cyclic_find(pattern.decode())
             else:
                 if(not silence):
                     binja.log_info(
