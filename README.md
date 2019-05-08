@@ -1,6 +1,16 @@
 # bn-angr works only on Linux !!! 
 Symbolic execution for static vulnerability assessment in firmware
 
+#### SUPPORTED FEATURES
+##### a) Set start/end address of execution
+##### b) Dynamic recognition of numer and type of function params
+##### c) Option to search for buffer overflow
+##### d) Path exploration coloring 
+##### e) Set library path and select library to load
+##### f) ROP Chaining
+##### g) ROP Stack 
+##### h) Exploit PoC generation to JSON or file
+
 #### Example base on vulnerability found in IoT device
 
 ##### 1) angr should be installed on virtualenv, and binaryninja executed from
