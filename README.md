@@ -36,6 +36,8 @@ Symbolic execution for static vulnerability assessment in firmware
 
 ![Alt text](docs/images/set_start.png?raw=true "Set execution start address")
 ![Alt text](docs/images/set_end.png?raw=true "Set execution end address")
+![Alt text](docs/images/func_params.png?raw=true "Set function params")
+![Alt text](docs/images/func_params2.png?raw=true "Set function params")
 ![Alt text](docs/images/ld_path.png?raw=true "Set LD_PATH")
 ![Alt text](docs/images/ld_path2.png?raw=true "Set LD_PATH details")
 ![Alt text](docs/images/shared_lib.png?raw=true "Set Shared lib")
