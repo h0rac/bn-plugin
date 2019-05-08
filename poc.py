@@ -18,8 +18,6 @@ import collections
 import binascii
 from pwn import *
 
-BinaryView.set_default_session_data("find_list", set())
-
 registers = {"mips32": ['a0', 'a1', 'a2', 'a3', 's0', 's1',
              's2', 's3', 's4', 's5', 's6', 's7',
              't0', 't1', 't2', 't3', 't4', 't5',
@@ -61,6 +59,8 @@ class MainExplorer(Explorer):
 
 class UIPlugin(PluginCommand):
 
+    path = []
+
     def __init__(self):
         super(UIPlugin, self).register_for_address("Explorer\WR941ND\Start Address\Set",
               "Set execution starting point address", self.set_start_address)
@@ -73,9 +73,14 @@ class UIPlugin(PluginCommand):
         super(UIPlugin, self).register("Explorer\WR941ND\ROP\Shared Library\Select",
                        "Try to build exploit rop chain", self.choice_menu)
         super(UIPlugin, self).register(
-            "Explorer\WR941ND\Library\Set LD_PATH", "Add LD_PATH", self.set_ld_path)
+            "Explorer\WR941ND\Library\Set Library Path", "Add LD_PATH", self.set_ld_path)
         super(UIPlugin, self).register_for_address(
             "Explorer\WR941ND\Function\Set Params","Add function params", self.set_function_params)
+        super(UIPlugin, self).register(
+            "Explorer\WR941ND\Clear All", "Clear data", self.clear)
+        super(UIPlugin, self).register(
+            "Explorer\WR941ND\Display Session Data", "Display data", self.display_data)
+
         self.start = None
         self.end = None
 
@@ -84,12 +89,12 @@ class UIPlugin(PluginCommand):
         if(not path):
             return
         binja.log_info("Selected LD_PATH: {0}".format(path))
-        bv.set_default_session_data("ld_path", path.decode())
+        BackgroundTaskManager.ld_path = path.decode()
 
     def choice_menu(self, bv):
         try:
             proj = angr.Project(bv.file.filename, ld_path=[
-                                bv.session_data.ld_path], use_system_libs=False)
+                                BackgroundTaskManager.ld_path], use_system_libs=False)
             libs = list(proj.loader.shared_objects.keys())[1::]
             mapped_libs = {}
             for i in range(0, len(libs)):
@@ -98,10 +103,10 @@ class UIPlugin(PluginCommand):
                 "Libraries", "project libraries", libs)
             binja.log_info("Selected library {0}".format(
                 mapped_libs[selected]))
-            bv.set_default_session_data("selected", mapped_libs[selected])
-        except KeyError as e:
+            BackgroundTaskManager.selected_opt =  mapped_libs[selected]
+        except KeyError:
             UIPlugin.display_message(
-                'KeyException', "Missing definition of: {0}".format(str(e)))
+                'KeyException', "Library was not selected")
 
     @classmethod
     def dump_regs(self, state, registers, *include):
@@ -117,7 +122,7 @@ class UIPlugin(PluginCommand):
     def color_path(self, bv, addr):
         # Highlight the instruction in green
         blocks = bv.get_basic_blocks_at(addr)
-        bv.session_data.find_list.add(addr)
+        UIPlugin.path.append(addr)
         for block in blocks:
             block.set_auto_highlight(HighlightColor(
                 HighlightStandardColor.GreenHighlightColor, alpha=128))
@@ -126,7 +131,10 @@ class UIPlugin(PluginCommand):
 
     @classmethod
     def clear_color_path(self, bv):
-        for addr in bv.session_data.find_list:
+        if(len(UIPlugin.path) <= 0):
+            UIPlugin.display_message("Path", "Nothing to clear yet")
+            return
+        for addr in UIPlugin.path:
             blocks = bv.get_basic_blocks_at(addr)
             for block in blocks:
                 block.set_auto_highlight(HighlightColor(
@@ -144,15 +152,15 @@ class UIPlugin(PluginCommand):
                     block.function.set_auto_instr_highlight(
                         addr, HighlightStandardColor.OrangeHighlightColor)
                     self.start = addr
-                    bv.set_default_session_data("start_addr", addr)
+                    BackgroundTaskManager.start_addr = self.start
                 else:
                     block.function.set_auto_instr_highlight(
                         addr, HighlightStandardColor.OrangeHighlightColor)
                     self.start = addr
-                    bv.set_default_session_data("start_addr", addr)
+                    BackgroundTaskManager.start_addr = self.start
             binja.log_info("Start: 0x%x" % addr)
         except:
-            show_message_box("Afl-Unicorn", "Error please open git issue !",
+            show_message_box("StartAddress", "Error please open git issue !",
                              MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.ErrorIcon)
 
     def _clear_address(self, block, addr):
@@ -166,7 +174,7 @@ class UIPlugin(PluginCommand):
             start_block = bv.get_basic_blocks_at(self.start)
             self._clear_address(start_block, self.start)
             self.start = None
-            bv.set_default_session_data('start_addr', None)
+            BackgroundTaskManager.start_addr = self.start
         else:
             show_message_box("Plugin", "Start address not set !",
                                             MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
@@ -182,11 +190,13 @@ class UIPlugin(PluginCommand):
                     block.function.set_auto_instr_highlight(
                         addr, HighlightStandardColor.OrangeHighlightColor)
                     self.end = addr
+                    BackgroundTaskManager.end_addr = self.end
                     bv.set_default_session_data('end_addr', self.end)
                 else:
                     block.function.set_auto_instr_highlight(
                         addr, HighlightStandardColor.OrangeHighlightColor)
                     self.end = addr
+                    BackgroundTaskManager.end_addr = self.end
                     bv.set_default_session_data('end_addr', self.end)
             binja.log_info("End: 0x%x" % addr)
         except:
@@ -198,7 +208,7 @@ class UIPlugin(PluginCommand):
             end_block = bv.get_basic_blocks_at(self.end)
             self._clear_address(end_block, self.end)
             self.end = None
-            bv.set_default_session_data('end_addr', None)
+            BackgroundTaskManager.end_addr = self.end
         else:
             show_message_box("Plugin", "End address not set !",
                                             MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
@@ -213,39 +223,54 @@ class UIPlugin(PluginCommand):
         menu = ["Function Params"]
         for i in range(0, size):
              text_field = interaction.TextLineField("Param {0}".format(i))
-             choice_field = interaction.ChoiceField("Pointer", ["Yes", "No"])
+             choice_pointer = interaction.ChoiceField("Pointer", ["No", "Yes"])
+             overflow_field = interaction.ChoiceField("Buffer Overflow", ["No", "Yes"])
              menu.append(text_field)
-             menu.append(choice_field)
+             menu.append(choice_pointer)
+             menu.append(overflow_field)
         return menu
 
-    def get_menu_results(self, menu_items):
+    def get_menu_results(self, menu_items, param_num):
         result = [x.result for x in menu_items]
-        return list(zip(result[0::2], result[1::2]))
+        return [result[i*param_num:(i+1)*param_num] for i in range(len(result)//param_num)]
         
     def convert_menu_results(self, results):
-        result_list = []
-        for key,value in results:
-            if value == 0:
-                result_list.append({'param':key, 'type': value})
-            else:
-                result_list.append({'param':key, 'type': value})
-        return result_list
+        keys = ['param', 'pointer', 'b_overflow']
+        converted_list = []
+        for item in results:
+            converted_list.append({keys[i]: item[i] for i in range(len(keys))})
+        return converted_list
 
      
     def set_function_params(self, bv, addr):
         func = bv.get_function_at(addr)
-        if(type(func) != binja.function.Function):
+        if(func == None or type(func) != binja.function.Function):
             self.display_message("Error", "This is not a function!" )
+            return
         binja.log_info("Function has {0} params".format(len(func.parameter_vars)))
         menu_items = self.generate_menu_text_fields(len(func.parameter_vars))
         menu = interaction.get_form_input(menu_items, "Parameters")
         if menu:
-            results = self.get_menu_results(menu_items[1::])
+            results = self.get_menu_results(menu_items[1::], 3)
             converted = self.convert_menu_results(results)
             print("Converted params", converted)
-            bv.set_default_session_data("func_params", converted)
+            BackgroundTaskManager.func_params = converted
 
-
+ 
+    def display_data(self, bv):
+        print("session", bv.session_data)
+        for k,v in bv.session_data.items():
+            print("Session data {0} value {1}".format(k,v))
+    
+    @classmethod
+    def clear(self, bv):
+        UIPlugin.clear_color_path(bv)
+        BackgroundTaskManager.start_addr = 0x0
+        BackgroundTaskManager.end_addr = 0x0
+        BackgroundTaskManager.func_params = {}
+        BackgroundTaskManager.selected_opt = ''
+        BackgroundTaskManager.ld_path = ''
+        
 class AngrRunner(BackgroundTaskThread):
     def __init__(self, bv, explorer):
         BackgroundTaskThread.__init__(
@@ -262,6 +287,12 @@ class AngrRunner(BackgroundTaskThread):
 
 
 class BackgroundTaskManager():
+    start_addr = 0x0
+    end_addr = 0x0
+    ld_path = ''
+    func_params = {}
+    selected_opt = ''
+
     def __init__(self, bv):
         self.runner = None
         self.vulnerability_explorer = None
@@ -280,32 +311,45 @@ class BackgroundTaskManager():
     @classmethod
     def vuln_explore(self, bv):
         try:
-            start_addr = bv.session_data.start_addr
-            end_addr = bv.session_data.end_addr
+            start_addr = BackgroundTaskManager.start_addr
+            end_addr = BackgroundTaskManager.end_addr
+            ld_path = BackgroundTaskManager.ld_path
+            params = BackgroundTaskManager.func_params
+            if(start_addr == 0x0 or end_addr == 0x0):
+                UIPlugin.display_message(
+                  'TypeError', "Invalid or missing start_addr or end_addr")
+                return
+            print("BackgroundTaskManager start_addr: 0x{0:0x}, end_addr: 0x{1:0x}".format(start_addr, end_addr))
             self.vulnerability_explorer = VulnerabilityExplorer(
-                bv, start_addr, end_addr, ld_path=bv.session_data.ld_path)
-            params = bv.session_data.func_params
+                bv, BackgroundTaskManager.start_addr, BackgroundTaskManager.end_addr, ld_path=ld_path)
             binja.log_info("Session function params {0}".format(params))
             args = self.vulnerability_explorer.set_args(params)
             binja.log_info("Parameters pass to function {0}".format(args))
             state = self.vulnerability_explorer.feed_function_state(args)
             self.vulnerability_explorer.set_sim_manager(state)
-            print("TEST", params[0].get('param'))
-            self.vulnerability_explorer.check_buffer_overflow(params[0].get('param'))
+            self.vulnerability_explorer.check_buffer_overflow(params)
             self.runner = AngrRunner(bv, self.vulnerability_explorer)
             self.runner.start()
         except KeyError as e:
               UIPlugin.display_message(
-                  'KeyException', "Missing definition of: {0}".format(str(e)))
+                  'KeyError', "Missing definition of: {0}".format(e))
+              return
 
     @classmethod
     def build_rop(self, bv):
         try:
-            start_addr = bv.session_data.start_addr
-            end_addr = bv.session_data.end_addr
+            start_addr = BackgroundTaskManager.start_addr
+            end_addr = BackgroundTaskManager.end_addr
+            ld_path = BackgroundTaskManager.ld_path
+            if(start_addr == 0x0 or end_addr == 0x0 or ld_path == ''):
+                UIPlugin.display_message(
+                  'TypeError', "Invalid or missing start_addr or end_addr or lib path")
+                return
+            print("BackrgoundTaskManager ld_path: {0}".format(ld_path))
+            selected_opt = BackgroundTaskManager.selected_opt
             self.proj = angr.Project(bv.file.filename, ld_path=[
-                bv.session_data.ld_path], use_system_libs=False)
-            self.libc = self.proj.loader.shared_objects[bv.session_data.selected]
+                ld_path], use_system_libs=False)
+            self.libc = self.proj.loader.shared_objects[selected_opt]
             print("LIBC", self.libc)
             self.libc_base = self.libc.min_addr
             self.gadget1 = self.libc_base+0x00055c60
@@ -319,7 +363,7 @@ class BackgroundTaskManager():
                 p32(self.gadget2, endian='big')+p32(self.gadget1, endian='big')
             self.rop_explorer = ROPExplorer(bv, self.proj, start_addr, end_addr, first=self.gadget1, second=self.gadget2,
                                             third=self.gadget3, fourth=self.gadget4, fifth=self.gadget5, sixth=self.sleep)
-                                                                            
+
             args = self.rop_explorer.set_args(
                 arg0={'key': self.init, 'key_type': 'pointer'})
             state = self.rop_explorer.feed_function_state(args)
@@ -347,7 +391,7 @@ class BackgroundTaskManager():
     def stop(self, bv):
         self.runner.cancel(bv)
 
-
+       
 class VulnerabilityExplorer(MainExplorer):
     def __init__(self, bv, func_start_addr, func_end_addr, ld_path=None, use_system_libs=False):
         self.bv = bv
@@ -358,7 +402,8 @@ class VulnerabilityExplorer(MainExplorer):
         self.cfg = self.proj.analyses.CFGFast(
             regions=[(self.func_start_addr, self.func_end_addr)])
         self.args = {}
-        self.init = None
+        self.overflow = False
+        self.params = None
 
         self.proj.hook(self.func_end_addr, self.explore)
 
@@ -376,14 +421,14 @@ class VulnerabilityExplorer(MainExplorer):
             print(sm.found)
             found = sm.found[0]
             print("found", found)
-            if self.init:
+            if self.overflow:
                 self.identify_overflow(found, registers[self.bv.arch.name])
 
     def set_args(self, args):
         counter = 0
         if args is not None:
             for item in args:
-                if item['type'] == 0:
+                if item['pointer'] == 1:
                     self.args['arg'+str(counter)] = angr.PointerWrapper(item.get('param'))
                 else:
                     self.args['arg'+str(counter)] = item.get('param')
@@ -397,9 +442,23 @@ class VulnerabilityExplorer(MainExplorer):
     def set_sim_manager(self, state):
          self.simgr = self.proj.factory.simgr(self.state)
 
-    def check_buffer_overflow(self, payload):
-        if payload:
-            self.init = payload
+    def check_buffer_overflow(self, params):
+        if params:
+            self.params = params
+        counter = 0
+        for item in params:
+            if item['b_overflow'] == 1:
+                counter +=1
+        if counter == 1:
+            self.overflow = True
+            return self.overflow
+        elif counter > 1:
+            UIPlugin.display_message('Buffer Overflow Check', "Only one parameter could be check for Buffer Overflow")
+            self.overflow = False 
+            return self.overflow
+        else:
+            self.overflow = False 
+            return self.overflow
     
     def find_pattern(self, params, pattern):
         for item in params:
@@ -417,7 +476,7 @@ class VulnerabilityExplorer(MainExplorer):
             data = registers
         for arg in data:
             pattern = found.solver.eval(found.regs.get(arg), cast_to=bytes)
-            if self.find_pattern(self.bv.session_data.func_params, pattern):
+            if self.find_pattern(self.params, pattern):
                 if(arg == 'ra' and cyclic_find(pattern.decode())):
                     binja.log_warn("[*] Buffer overflow detected !!!")
                     binja.log_warn(
