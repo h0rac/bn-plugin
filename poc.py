@@ -78,8 +78,6 @@ class UIPlugin(PluginCommand):
             "Explorer\WR941ND\Function\Set Params","Add function params", self.set_function_params)
         super(UIPlugin, self).register(
             "Explorer\WR941ND\Clear All", "Clear data", self.clear)
-        super(UIPlugin, self).register(
-            "Explorer\WR941ND\Display Session Data", "Display data", self.display_data)
 
         self.start = None
         self.end = None
@@ -255,12 +253,6 @@ class UIPlugin(PluginCommand):
             converted = self.convert_menu_results(results)
             print("Converted params", converted)
             BackgroundTaskManager.func_params = converted
-
- 
-    def display_data(self, bv):
-        print("session", bv.session_data)
-        for k,v in bv.session_data.items():
-            print("Session data {0} value {1}".format(k,v))
     
     @classmethod
     def clear(self, bv):
