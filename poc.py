@@ -779,9 +779,6 @@ PluginCommand.register("Explorer\WR941ND\Generate Exploit\Save as JSON",
                        "Try to save exploit as JSON", BackgroundTaskManager.exploit_to_json)
 PluginCommand.register("Explorer\WR941ND\Generate Exploit\Save to File",
                        "Try to build exploit fom rop chain", BackgroundTaskManager.exploit_to_file)
-PluginCommand.register(
-    "Explorer\WR941ND\Clear", "Clear angr path traversed blocks", BackgroundTaskManager.stop)
-
 if __name__ == "__main__":
     pass
 else:
