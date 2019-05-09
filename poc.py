@@ -215,42 +215,73 @@ class UIPlugin(PluginCommand):
         show_message_box(title, desc,
                          MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
 
-    def generate_menu_text_fields(self, size):
+    
+    def mapper(self, params):
+        types = {
+            0 :'void',
+            1 : 'bool',
+            2 :'integer',
+            3 :'float',
+            4 : 'structure',
+            5 : 'enum',
+            6 : 'pointer',
+            7: 'array',
+            8: 'function',
+            9: 'var_args',
+            10: 'value',
+            11: 'named_reference',
+            12: 'wide_char'
+        }
+        mapped_types = []
+        for param in params:
+            mapped_types.append({'param':param.name, 'type':types[param.type.type_class], 'value':None, 'b_overflow':0}) 
+        return mapped_types
+            
+
+    def generate_menu_text_fields(self, arg_types):
         menu = ["Function Params"]
-        for i in range(0, size):
-            text_field = interaction.TextLineField("Param {0}".format(i))
-            choice_pointer = interaction.ChoiceField("Pointer", ["No", "Yes"])
+        for arg in arg_types:
+            text_field = interaction.TextLineField("{0}, type:{1}".format(arg['param'], arg['type']))
             overflow_field = interaction.ChoiceField(
                 "Buffer Overflow", ["No", "Yes"])
             menu.append(text_field)
-            menu.append(choice_pointer)
             menu.append(overflow_field)
         return menu
 
     def get_menu_results(self, menu_items, param_num):
         result = [x.result for x in menu_items]
-        return [result[i*param_num:(i+1)*param_num] for i in range(len(result)//param_num)]
+        keys  = ['value', 'b_overflow'] * param_num
+        return list(zip(keys,result))
+       
+    def convert_menu_results(self, input_data, mapped_types):
+        result = []
+        temp = [{item[0]:item[1]} for item in input_data]
+        for i in range(0,len(temp), 2):
+            result.append(dict(temp[i:i+2][0], **temp[i:i+2][1]))
 
-    def convert_menu_results(self, results):
-        keys = ['param', 'pointer', 'b_overflow']
-        converted_list = []
-        for item in results:
-            converted_list.append({keys[i]: item[i] for i in range(len(keys))})
-        return converted_list
+        for i in range(0,len(mapped_types)):
+            for k,v in mapped_types[i].items():
+                if k == 'b_overflow' or k == 'value':
+                    mapped_types[i][k] = result[i][k]
+        return mapped_types
 
     def set_function_params(self, bv, addr):
         func = bv.get_function_at(addr)
         if(func == None or type(func) != binja.function.Function):
             self.display_message("Error", "This is not a function!")
             return
+        params_len = len(func.parameter_vars)
         binja.log_info("Function has {0} params".format(
-            len(func.parameter_vars)))
-        menu_items = self.generate_menu_text_fields(len(func.parameter_vars))
+            params_len))
+        if params_len <= 0:
+            UIPlugin.display_message("Params", "This function do not take any params")
+            return
+        mapped_types = self.mapper(func.parameter_vars)
+        menu_items = self.generate_menu_text_fields(mapped_types)
         menu = interaction.get_form_input(menu_items, "Parameters")
         if menu:
-            results = self.get_menu_results(menu_items[1::], 3)
-            converted = self.convert_menu_results(results)
-            print("Converted params", converted)
+            results = self.get_menu_results(menu_items[1::], 2)
+            converted = self.convert_menu_results(results, mapped_types)
             BackgroundTaskManager.func_params = converted
 
     @classmethod
@@ -428,11 +459,10 @@ class VulnerabilityExplorer(MainExplorer):
         counter = 0
         if args is not None:
             for item in args:
-                if item['pointer'] == 1:
-                    self.args['arg'+str(counter)
-                              ] = angr.PointerWrapper(item.get('param'))
+                if item['type'] == 'pointer':
+                    self.args['arg'+str(counter)] = angr.PointerWrapper(item.get('value'))
                 else:
-                    self.args['arg'+str(counter)] = item.get('param')
+                    self.args['arg'+str(counter)] = item.get('value')
                 counter += 1
         return self.args
 
@@ -470,7 +500,7 @@ class VulnerabilityExplorer(MainExplorer):
 
     def find_pattern(self, params, pattern):
         for item in params:
-            dest = item.get('param').encode()
+            dest = item.get('value').encode()
             if pattern in dest:
                 return True
         return False
