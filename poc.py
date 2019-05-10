@@ -280,7 +280,7 @@ class UIPlugin(PluginCommand):
         menu_items = self.generate_menu_text_fields(mapped_types)
         menu = interaction.get_form_input(menu_items, "Parameters")
         if menu:
-            results = self.get_menu_results(menu_items[1::], 2)
+            results = self.get_menu_results(menu_items[1::], params_len)
             converted = self.convert_menu_results(results, mapped_types)
             BackgroundTaskManager.func_params = converted
 
