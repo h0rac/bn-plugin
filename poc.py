@@ -362,6 +362,8 @@ class BackgroundTaskManager():
             return 'big'
         return 'little'
 
+        
+
     @classmethod
     def vuln_explore(self, bv):
         try:
@@ -379,8 +381,9 @@ class BackgroundTaskManager():
                 bv, BackgroundTaskManager.start_addr, BackgroundTaskManager.end_addr, ld_path=ld_path)
             binja.log_info("Session function params {0}".format(params))
             args = self.vulnerability_explorer.set_args(params)
-            binja.log_info("Parameters pass to function {0}".format(args))
-            state = self.vulnerability_explorer.feed_function_state(args)
+            func_params = self.vulnerability_explorer.get_params_list(args, len(args.keys()))
+            binja.log_info("Parameters pass to function {0}".format(func_params))
+            state = self.vulnerability_explorer.feed_function_state(func_params)
             self.vulnerability_explorer.set_sim_manager(state)
             result = self.vulnerability_explorer.check_buffer_overflow(params)
             if result == False:
@@ -495,14 +498,23 @@ class VulnerabilityExplorer(MainExplorer):
                 counter += 1
         return self.args
 
+      
+    def get_params_list(self, args, size):
+        possible_args = ['arg'+str(x) for x in range(0, size)]
+        func_params = []
+        for item in possible_args:
+            if args.get(item) != None:
+                func_params.append(args.get(item))
+        print("FUNC PARAMS", func_params)
+        return func_params
+
     def get_endianess(self, bv):
         if bv.arch.endianness == 1:
             return 'big'
         return 'little'
 
-    def feed_function_state(self, args=None, data=None):
-        self.state = self.proj.factory.call_state(
-            self.func_start_addr, args['arg0'])
+    def feed_function_state(self, params):
+        self.state = self.proj.factory.call_state(self.func_start_addr, *params)
         return self.state
 
     def set_sim_manager(self, state):
