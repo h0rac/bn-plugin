@@ -215,16 +215,15 @@ class UIPlugin(PluginCommand):
         show_message_box(title, desc,
                          MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
 
-    
     def mapper(self, params):
         types = {
-            0 :'void',
-            1 : 'bool',
-            2 :'integer',
-            3 :'float',
-            4 : 'structure',
-            5 : 'enum',
-            6 : 'pointer',
+            0: 'void',
+            1: 'bool',
+            2: 'integer',
+            3: 'float',
+            4: 'structure',
+            5: 'enum',
+            6: 'pointer',
             7: 'array',
             8: 'function',
             9: 'var_args',
@@ -234,17 +233,21 @@ class UIPlugin(PluginCommand):
         }
         mapped_types = []
         for param in params:
-            mapped_types.append({'param':param.name, 'type':types[param.type.type_class], 'value':None, 'b_overflow':0, 'pattern_create':0}) 
+            mapped_types.append(
+                {'param': param.name, 'type': types[param.type.type_class], 'value': None, 'b_overflow': 0, 'pattern_create': 0})
         return mapped_types
-            
 
     def generate_menu_text_fields(self, arg_types):
         menu = ["Function Params"]
         for arg in arg_types:
-            text_field = interaction.TextLineField("{0} => type: {1}".format(arg['param'], arg['type']))
+            if arg['type'] == 'integer':
+                text_field = interaction.IntegerField("{0} => type: {1}".format(arg['param'], arg['type']))
+            else:
+                text_field = interaction.TextLineField("{0} => type: {1}".format(arg['param'], arg['type']))
             overflow_field = interaction.ChoiceField(
                 "Buffer Overflow", ["No", "Yes"])
-            pattern_field = interaction.ChoiceField("Send Pattern", ["No", "Yes"])
+            pattern_field = interaction.ChoiceField(
+                "Send Pattern", ["No", "Yes"])
             menu.append(text_field)
             menu.append(overflow_field)
             menu.append(pattern_field)
@@ -252,22 +255,22 @@ class UIPlugin(PluginCommand):
 
     def get_menu_results(self, menu_items, param_num):
         result = [x.result for x in menu_items]
-        keys  = ['value', 'b_overflow', 'pattern_create'] * param_num
-        return list(zip(keys,result))
-       
+        keys = ['value', 'b_overflow', 'pattern_create'] * param_num
+        return list(zip(keys, result))
+
     def convert_menu_results(self, input_data, mapped_types, size):
         result = []
         temp = [{item[0]:item[1]} for item in input_data]
-        for i in range(0,len(temp), size):
+        for i in range(0, len(temp), size):
             d1 = dict(temp[i:i+size][0], **temp[i:i+size][1])
             d2 = dict(temp[i:i+size][1], **temp[i:i+size][2])
-            result.append(dict(d1,**d2))
-        for i in range(0,len(mapped_types)):
-            for k,v in mapped_types[i].items():
-                if k == 'b_overflow' or k == 'value' or k== 'pattern_create':
+            result.append(dict(d1, **d2))
+        for i in range(0, len(mapped_types)):
+            for k, v in mapped_types[i].items():
+                if k == 'b_overflow' or k == 'value' or k == 'pattern_create':
                     mapped_types[i][k] = result[i][k]
         return mapped_types
-    
+
     def pattern_create(self, params):
         counter = 0
         result = 0
@@ -285,9 +288,8 @@ class UIPlugin(PluginCommand):
 
     def display_converted_params(self, params):
         for p in params:
-            for k,v in p.items():
-                binja.log_info("[+] {0}: {1}".format(k,v))
-
+            for k, v in p.items():
+                binja.log_info("[+] {0}: {1}".format(k, v))
 
     def set_function_params(self, bv, addr):
         func = bv.get_function_at(addr)
@@ -298,7 +300,8 @@ class UIPlugin(PluginCommand):
         binja.log_info("[+] Function has {0} params".format(
             params_len))
         if params_len <= 0:
-            UIPlugin.display_message("Params", "This function do not take any params")
+            UIPlugin.display_message(
+                "Params", "This function do not take any params")
             return
         mapped_types = self.mapper(func.parameter_vars)
         menu_items = self.generate_menu_text_fields(mapped_types)
@@ -362,8 +365,6 @@ class BackgroundTaskManager():
             return 'big'
         return 'little'
 
-        
-
     @classmethod
     def vuln_explore(self, bv):
         try:
@@ -381,15 +382,18 @@ class BackgroundTaskManager():
                 bv, BackgroundTaskManager.start_addr, BackgroundTaskManager.end_addr, ld_path=ld_path)
             binja.log_info("Session function params {0}".format(params))
             args = self.vulnerability_explorer.set_args(params)
-            func_params = self.vulnerability_explorer.get_params_list(args, len(args.keys()))
-            binja.log_info("Parameters pass to function {0}".format(func_params))
-            state = self.vulnerability_explorer.feed_function_state(func_params)
+            func_params = self.vulnerability_explorer.get_params_list(
+                args, len(args.keys()))
+            binja.log_info(
+                "Parameters pass to function {0}".format(func_params))
+            state = self.vulnerability_explorer.feed_function_state(
+                func_params)
             self.vulnerability_explorer.set_sim_manager(state)
             result = self.vulnerability_explorer.check_buffer_overflow(params)
             if result == False:
-                 UIPlugin.display_message(
-                'Buffer Overflow Check', "Only one parameter could be check for Buffer Overflow")
-                 return
+                UIPlugin.display_message(
+                    'Buffer Overflow Check', "Only one parameter could be check for Buffer Overflow")
+                return
             self.runner = AngrRunner(bv, self.vulnerability_explorer)
             self.runner.start()
         except KeyError as e:
@@ -492,13 +496,13 @@ class VulnerabilityExplorer(MainExplorer):
         if args is not None:
             for item in args:
                 if item['type'] == 'pointer':
-                    self.args['arg'+str(counter)] = angr.PointerWrapper(item.get('value'))
+                    self.args['arg'+str(counter)
+                              ] = angr.PointerWrapper(item.get('value'))
                 else:
                     self.args['arg'+str(counter)] = item.get('value')
                 counter += 1
         return self.args
 
-      
     def get_params_list(self, args, size):
         possible_args = ['arg'+str(x) for x in range(0, size)]
         func_params = []
@@ -514,7 +518,8 @@ class VulnerabilityExplorer(MainExplorer):
         return 'little'
 
     def feed_function_state(self, params):
-        self.state = self.proj.factory.call_state(self.func_start_addr, *params)
+        self.state = self.proj.factory.call_state(
+            self.func_start_addr, *params)
         return self.state
 
     def set_sim_manager(self, state):
@@ -531,9 +536,6 @@ class VulnerabilityExplorer(MainExplorer):
             self.overflow = True
             return self.overflow
         elif counter > 1:
-            self.overflow = False
-            return self.overflow
-        else:
             self.overflow = False
             return self.overflow
 
