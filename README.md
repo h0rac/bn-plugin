@@ -1,4 +1,4 @@
-# bn-angr works only on Linux !!! 
+# Explorer plugin works only on Linux !!! 
 Symbolic execution for static vulnerability assessment in firmware
 
 #### SUPPORTED FEATURES
