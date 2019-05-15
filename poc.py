@@ -62,23 +62,6 @@ class UIPlugin(PluginCommand):
     path = []
 
     def __init__(self):
-        super(UIPlugin, self).register_for_address("Explorer\WR941ND\Start Address\Set",
-                                                   "Set execution starting point address", self.set_start_address)
-        super(UIPlugin, self).register("Explorer\WR941ND\Start Address\Clear",
-                                       "Clear starting point address", self.clear_start_address)
-        super(UIPlugin, self).register_for_address(
-            "Explorer\WR941ND\End Address\Set", "Set execution end address", self.set_end_address)
-        super(UIPlugin, self).register("Explorer\WR941ND\End Address\Clear",
-                                       "Clear end point address", self.clear_end_address)
-        super(UIPlugin, self).register("Explorer\WR941ND\ROP\Shared Library\Select",
-                                       "Try to build exploit rop chain", self.choice_menu)
-        super(UIPlugin, self).register(
-            "Explorer\WR941ND\Library\Set Library Path", "Add LD_PATH", self.set_ld_path)
-        super(UIPlugin, self).register_for_address(
-            "Explorer\WR941ND\Function\Set Params", "Add function params", self.set_function_params)
-        super(UIPlugin, self).register(
-            "Explorer\WR941ND\Clear All", "Clear data", self.clear)
-
         self.start = None
         self.end = None
 
@@ -344,7 +327,7 @@ class BackgroundTaskManager():
     func_params = {}
     selected_opt = ''
 
-    def __init__(self, bv):
+    def __init__(self):
         self.runner = None
         self.vulnerability_explorer = None
         self.rop_explorer = None
@@ -365,7 +348,7 @@ class BackgroundTaskManager():
             return 'big'
         return 'little'
 
-    @classmethod
+
     def vuln_explore(self, bv):
         try:
             start_addr = BackgroundTaskManager.start_addr
@@ -401,7 +384,6 @@ class BackgroundTaskManager():
                 'KeyError', "Missing definition of: {0}".format(e))
             return
 
-    @classmethod
     def build_rop(self, bv):
         try:
             endian = BackgroundTaskManager.get_endianess(bv)
@@ -442,20 +424,19 @@ class BackgroundTaskManager():
             UIPlugin.display_message(
                 'KeyException', "Missing definition of: {0}".format(str(e)))
 
-    @classmethod
+  
     def exploit_to_file(self, bv):
         self.exploit_creator = FileExploitCreator(bv, self.init, self.payload)
         self.runner = AngrRunner(bv, self.exploit_creator)
         self.runner.start()
 
-    @classmethod
+   
     def exploit_to_json(self, bv):
         self.json_exploit_creator = JSONExploitCreator(
             bv, self.init, self.payload)
         self.runner = AngrRunner(bv, self.json_exploit_creator)
         self.runner.start()
 
-    @classmethod
     def stop(self, bv):
         self.runner.cancel(bv)
 
@@ -862,16 +843,31 @@ class JSONExploitCreator(Explorer):
         show_message_box("Exploit Creator", "Exploit saved as JSON",
                          MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.InformationIcon)
 
+ui_plugin = UIPlugin()
+btm = BackgroundTaskManager()
 
 PluginCommand.register(
-    "Explorer\WR941ND\Explore", "Attempt to solve for a path that satisfies the constraints given", BackgroundTaskManager.vuln_explore)
+    "Explorer\WR941ND\Explore", "Attempt to solve for a path that satisfies the constraints given", btm.vuln_explore)
 PluginCommand.register("Explorer\WR941ND\ROP\Build",
-                       "Try to build exploit rop chain", BackgroundTaskManager.build_rop)
+                       "Try to build exploit rop chain", btm.build_rop)
 PluginCommand.register("Explorer\WR941ND\Generate Exploit\Save as JSON",
-                       "Try to save exploit as JSON", BackgroundTaskManager.exploit_to_json)
+                       "Try to save exploit as JSON", btm.exploit_to_json)
 PluginCommand.register("Explorer\WR941ND\Generate Exploit\Save to File",
-                       "Try to build exploit fom rop chain", BackgroundTaskManager.exploit_to_file)
-if __name__ == "__main__":
-    pass
-else:
-    afl_ui = UIPlugin()
+                       "Try to build exploit fom rop chain", btm.exploit_to_file)
+
+PluginCommand.register_for_address("Explorer\WR941ND\Start Address\Set",
+                                                   "Set execution starting point address", ui_plugin.set_start_address)
+PluginCommand.register("Explorer\WR941ND\Start Address\Clear",
+                                "Clear starting point address", ui_plugin.clear_start_address)
+PluginCommand.register_for_address(
+    "Explorer\WR941ND\End Address\Set", "Set execution end address", ui_plugin.set_end_address)
+PluginCommand.register("Explorer\WR941ND\End Address\Clear",
+                                "Clear end point address", ui_plugin.clear_end_address)
+PluginCommand.register("Explorer\WR941ND\ROP\Shared Library\Select",
+                                "Try to build exploit rop chain", ui_plugin.choice_menu)
+PluginCommand.register(
+    "Explorer\WR941ND\Library\Set Library Path", "Add LD_PATH", ui_plugin.set_ld_path)
+PluginCommand.register_for_address(
+    "Explorer\WR941ND\Function\Set Params", "Add function params", ui_plugin.set_function_params)
+PluginCommand.register(
+        "Explorer\WR941ND\Clear All", "Clear data", ui_plugin.clear)
