@@ -18,17 +18,24 @@ import collections
 import binascii
 from pwn import *
 
-registers = {"mips32": ['a0', 'a1', 'a2', 'a3', 's0', 's1',
-                        's2', 's3', 's4', 's5', 's6', 's7',
-                        't0', 't1', 't2', 't3', 't4', 't5',
-                        't6', 't7', 't8', 't9', 'v0', 'v1',
-                        'sp', 'gp', 'pc', 'ra', 'fp'],
-             "armv7": ['r0', 'r1', 'r2', 'r3', 'r4', 'r5',
-                       'r6', 'r7', 'r8', 'r9', 'r10', 'r11',
-                       'r12', 'lr', 'sp', 'pc']}
+registers = {}
+with open(os.path.dirname(__file__)+'/registers.json') as f:
+  registers = json.load(f)
 
 
 class Explorer(ABC):
+    """
+    Abstract explorer class
+    
+    Methods
+    -------
+    run()
+        Override by inherited class
+    
+    explorer
+        Override by inherited class
+    """
+
     @abstractmethod
     def run(self):
         pass
@@ -39,6 +46,20 @@ class Explorer(ABC):
 
 
 class MainExplorer(Explorer):
+    """
+    Abstract MainExplorer class
+    
+    Methods
+    -------
+    feed_function_state()
+        Override by inherited class, used to provide state for hooked function
+    
+    set_args()
+        Override by inherited class, used to set arguments for function state
+    
+    set_sim_manager()
+        Override by inhertied class, used to set simulation manager 
+    """
 
     @abstractmethod
     def explore(self):
@@ -58,14 +79,95 @@ class MainExplorer(Explorer):
 
 
 class UIPlugin(PluginCommand):
+    """
+    Abstract explorer class
+
+    Attributes
+    ----------
+    path - used to keep traversed path by symbolic execution
+    
+    Methods
+    -------
+
+    choice_menu(self, bv)
+        public, used to provide dropdown with shared libraries
+
+    clear_start_address(self, bv)
+        public, clear start address selection
+    
+    clear(self, bv)
+        publuc, clear all UI information
+
+    clear_end_address(self, bv)
+        public, clear end address selection
+    
+    _clear_address(self, bv, addr)
+        private, helper function to clear addresses
+    
+    color_path(self,bv, addr)
+        public, set color for execution path
+    
+    _convert_menu_results(self, input_data, mapped_types, size)
+        private, convert UI results to data that could be processed by Explorers
+    
+    display_message(self, title, desc)
+        displays message box 
+    
+    dump_regs(self, state, registers, *include)
+        public, dump and display information about registers
+    
+    __generate_menu_text_fields(self, arg_types)
+        private, generate UI menu base on function params type
+
+    _get_menu_results(self, menu_items, param_num)
+        private, generate results dictionary
+    
+    __mapper(self, params)
+        public, maps list of function params to types that BinaryNinja support
+     
+    _pattern_create(self, params)
+        private, create pattern data for all fields for which user selected "pattern" option
+    
+    set_start_address(bv, addr)
+        public, set start address for execution 
+
+    set_end_address(bv, addr)
+        public, set end address for execution 
+
+    set_ld_path(self, bv)
+        public, used to provide shared library path information
+
+    _display_converted_params(self, params):
+        private, used to provide console information for params
+
+    set_function_params(self, bv, addr)
+        public, display menu and convert all required params for Explorers
+   
+    """
+
 
     path = []
 
     def __init__(self):
+        """
+        Parameters
+        ----------
+        start : BinaryView address
+            start address of execution
+        end: BinaryView address
+            end address of execution
+        """
+
         self.start = None
         self.end = None
 
     def set_ld_path(self, bv):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        """
+
         path = interaction.get_directory_name_input("Select LD_PATH")
         if(not path):
             return
@@ -73,6 +175,12 @@ class UIPlugin(PluginCommand):
         BackgroundTaskManager.ld_path = path.decode()
 
     def choice_menu(self, bv):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        """
+
         try:
             proj = angr.Project(bv.file.filename, ld_path=[
                                 BackgroundTaskManager.ld_path], use_system_libs=False)
@@ -91,6 +199,17 @@ class UIPlugin(PluginCommand):
 
     @classmethod
     def dump_regs(self, state, registers, *include):
+        """
+        Parameters
+        ----------
+        state : angr.SimState
+           current state of execution
+        registers : list
+            list of registers
+        *include : variable list
+            variable list of registers, override registers list
+        """
+
         data = []
         if(len(include) > 0):
             data = [x for x in registers if x in include]
@@ -101,6 +220,13 @@ class UIPlugin(PluginCommand):
 
     @classmethod
     def color_path(self, bv, addr):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        address : BinaryView address
+        """
+        
         # Highlight the instruction in green
         blocks = bv.get_basic_blocks_at(addr)
         UIPlugin.path.append(addr)
@@ -112,6 +238,12 @@ class UIPlugin(PluginCommand):
 
     @classmethod
     def clear_color_path(self, bv):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        """
+
         if(len(UIPlugin.path) <= 0):
             UIPlugin.display_message("Path", "Nothing to clear yet")
             return
@@ -124,6 +256,13 @@ class UIPlugin(PluginCommand):
                     addr, HighlightStandardColor.NoHighlightColor)
 
     def set_start_address(self, bv, addr):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        address : BinaryView address
+        """
+
         try:
             blocks = bv.get_basic_blocks_at(addr)
             for block in blocks:
@@ -145,12 +284,25 @@ class UIPlugin(PluginCommand):
                              MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.ErrorIcon)
 
     def _clear_address(self, block, addr):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        address : BinaryView address
+        """
+
         for x in block:
             x.function.set_auto_instr_highlight(
                 addr, HighlightStandardColor.NoHighlightColor)
         addr = None
 
     def clear_start_address(self, bv):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        """
+
         if self.start:
             start_block = bv.get_basic_blocks_at(self.start)
             self._clear_address(start_block, self.start)
@@ -162,6 +314,13 @@ class UIPlugin(PluginCommand):
             return
 
     def set_end_address(self, bv, addr):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        address : BinaryView address
+        """
+
         try:
             blocks = bv.get_basic_blocks_at(addr)
             for block in blocks:
@@ -183,6 +342,12 @@ class UIPlugin(PluginCommand):
                              MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.ErrorIcon)
 
     def clear_end_address(self, bv):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        """
+        
         if self.end:
             end_block = bv.get_basic_blocks_at(self.end)
             self._clear_address(end_block, self.end)
@@ -195,10 +360,31 @@ class UIPlugin(PluginCommand):
 
     @classmethod
     def display_message(self, title, desc):
+        """
+        Parameters
+        ----------
+        title : string
+            title for message box
+        desc: string
+            description for message box
+        """
+
         show_message_box(title, desc,
                          MessageBoxButtonSet.OKButtonSet, MessageBoxIcon.WarningIcon)
 
-    def mapper(self, params):
+    def _mapper(self, params):
+        """
+        Parameters
+        ----------
+        params : list
+           list of parameters type that function accepts
+
+        Return
+        ------
+            Mapped types
+        """
+
+
         types = {
             0: 'void',
             1: 'bool',
@@ -220,7 +406,18 @@ class UIPlugin(PluginCommand):
                 {'param': param.name, 'type': types[param.type.type_class], 'value': None, 'b_overflow': 0, 'pattern_create': 0})
         return mapped_types
 
-    def generate_menu_text_fields(self, arg_types):
+    def _generate_menu_text_fields(self, arg_types):
+        """
+        Parameters
+        ----------
+        arg_types : list
+            list of converted by mapper function params to display
+        
+        Return
+        ------
+            UI menu
+        """
+
         menu = ["Function Params"]
         for arg in arg_types:
             if arg['type'] == 'integer':
@@ -236,12 +433,40 @@ class UIPlugin(PluginCommand):
             menu.append(pattern_field)
         return menu
 
-    def get_menu_results(self, menu_items, param_num):
+    def _get_menu_results(self, menu_items, param_num):
+        """
+        Parameters
+        ----------
+        menu_items : list
+            list of results after user provided data
+        param_num: integer
+            number of function params
+        
+        Return
+        ------
+           list of dictionaries per function parameter
+        """
+
         result = [x.result for x in menu_items]
         keys = ['value', 'b_overflow', 'pattern_create'] * param_num
         return list(zip(keys, result))
 
-    def convert_menu_results(self, input_data, mapped_types, size):
+    def _convert_menu_results(self, input_data, mapped_types, size):
+        """
+        Parameters
+        ----------
+        input_data : list
+            list of results provided by _get_menu_results function
+        mapped_types: list
+            list of mapped types to params
+        size: integer
+            number of unique keys that were added by _get_menu_results
+        
+        Return
+        ------
+            list of mapped types and values for supported key:value pairs
+        """
+
         result = []
         temp = [{item[0]:item[1]} for item in input_data]
         for i in range(0, len(temp), size):
@@ -254,7 +479,18 @@ class UIPlugin(PluginCommand):
                     mapped_types[i][k] = result[i][k]
         return mapped_types
 
-    def pattern_create(self, params):
+    def _pattern_create(self, params):
+        """
+        Parameters
+        ----------
+        params : list
+            list of results after function params UI provided
+        
+        Return
+        ------
+            Return pattern string
+        """
+
         counter = 0
         result = 0
         for p in params:
@@ -266,15 +502,28 @@ class UIPlugin(PluginCommand):
                 if p['pattern_create'] == 1:
                     p['value'] = cyclic(result)
         binja.log_info("[+] pattern size: {0}".format(result))
-        self.display_converted_params(params)
+        self._display_converted_params(params)
         return result
 
-    def display_converted_params(self, params):
+    def _display_converted_params(self, params):
+        """
+        Parameters
+        ----------
+        params : list
+            list of params to display at console log
+        """
         for p in params:
             for k, v in p.items():
                 binja.log_info("[+] {0}: {1}".format(k, v))
 
     def set_function_params(self, bv, addr):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        addr: BinaryView address
+        """
+
         func = bv.get_function_at(addr)
         if(func == None or type(func) != binja.function.Function):
             self.display_message("Error", "This is not a function!")
@@ -286,17 +535,23 @@ class UIPlugin(PluginCommand):
             UIPlugin.display_message(
                 "Params", "This function do not take any params")
             return
-        mapped_types = self.mapper(func.parameter_vars)
-        menu_items = self.generate_menu_text_fields(mapped_types)
+        mapped_types = self._mapper(func.parameter_vars)
+        menu_items = self._generate_menu_text_fields(mapped_types)
         menu = interaction.get_form_input(menu_items, "Parameters")
         if menu:
-            results = self.get_menu_results(menu_items[1::], params_len)
-            converted = self.convert_menu_results(results, mapped_types, 3)
-            self.pattern_create(converted)
+            results = self._get_menu_results(menu_items[1::], params_len)
+            converted = self._convert_menu_results(results, mapped_types, 3)
+            self._pattern_create(converted)
             BackgroundTaskManager.func_params = converted
 
     @classmethod
     def clear(self, bv):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        """
+
         UIPlugin.clear_color_path(bv)
         BackgroundTaskManager.start_addr = 0x0
         BackgroundTaskManager.end_addr = 0x0
