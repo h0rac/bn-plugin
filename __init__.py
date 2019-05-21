@@ -55,7 +55,7 @@ class MainExplorer(Explorer):
         Override by inherited class, used to provide state for hooked function
     
     set_args()
-        Override by inherited class, used to set arguments for function state
+        Override by inherited class, used to set angr arguments for function state
     
     set_sim_manager()
         Override by inhertied class, used to set simulation manager 
@@ -77,6 +77,9 @@ class MainExplorer(Explorer):
     def set_sim_manager(self):
         pass
 
+    @abstractmethod
+    def _get_endianess(self):
+        pass
 
 class UIPlugin(PluginCommand):
     """
@@ -561,6 +564,19 @@ class UIPlugin(PluginCommand):
 
 
 class AngrRunner(BackgroundTaskThread):
+    """
+    Class is used to execute run method on Explorer instances
+    
+    Methods
+    -------
+    run()
+        public, execute Explorer instances run method
+    
+    Params
+    ------
+    explorer - instance created from inherited Explorer class like(ROPExplorer or VulnerabilityExplorer)
+    """
+
     def __init__(self, bv, explorer):
         BackgroundTaskThread.__init__(
             self, "Vulnerability research with angr started...", can_cancel=True)
@@ -576,6 +592,48 @@ class AngrRunner(BackgroundTaskThread):
 
 
 class BackgroundTaskManager():
+    """
+    Class is used to execute run method on Explorer instances
+    
+    Methods
+    -------
+    set_exploit_payload(self, init, payload)
+        public, sets payload for JSONExploitCreator or FileCreator
+    
+    def get_endianess(self, bv)
+        public, set endianness base on binary information
+
+    vuln_explore(self,bv)
+        public, create instance of VulnerabilityExplorer and pass to AngrRunner to execute
+
+    build_rop(self, bv)
+        public, create instance of ROPExplorer and pass to AngrRunner to execute
+    
+    exploit_to_file(self, bv)
+        public, save generated explioit to file
+   
+    exploit_to_json(self, bv):
+        public, save generated exploit to JSON
+
+    stop(self, bv):
+        public, stop execution
+    
+    Fields
+    ------
+    start_addr: BinaryView address
+
+    end_addr: BinaryView address
+
+    ld_path:string
+        selected path from shared libraries
+
+    func_params: dictionary
+        keeps all function parameters with mapping
+
+    selected_opt: string
+        selected library to load by UIPlugin
+    """
+    
     start_addr = 0x0
     end_addr = 0x0
     ld_path = ''
@@ -594,17 +652,43 @@ class BackgroundTaskManager():
 
     @classmethod
     def set_exploit_payload(self, init, payload):
+        """
+        Parameters
+        ----------
+        init : string
+            initial payload
+
+        payload: string
+            payload after ROP
+        
+        """
+
         self.payload = payload
         self.init = init
 
     @classmethod
     def get_endianess(self, bv):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+
+        Return
+        ------
+            endianess as string
+        """
+
         if bv.arch.endianness == 1:
             return 'big'
         return 'little'
 
 
     def vuln_explore(self, bv):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        """
         try:
             start_addr = BackgroundTaskManager.start_addr
             end_addr = BackgroundTaskManager.end_addr
@@ -640,6 +724,12 @@ class BackgroundTaskManager():
             return
 
     def build_rop(self, bv):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        """
+
         try:
             endian = BackgroundTaskManager.get_endianess(bv)
             start_addr = BackgroundTaskManager.start_addr
@@ -681,22 +771,78 @@ class BackgroundTaskManager():
 
   
     def exploit_to_file(self, bv):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        """
         self.exploit_creator = FileExploitCreator(bv, self.init, self.payload)
         self.runner = AngrRunner(bv, self.exploit_creator)
         self.runner.start()
 
    
     def exploit_to_json(self, bv):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        """
+
         self.json_exploit_creator = JSONExploitCreator(
             bv, self.init, self.payload)
         self.runner = AngrRunner(bv, self.json_exploit_creator)
         self.runner.start()
 
     def stop(self, bv):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        """
+
         self.runner.cancel(bv)
 
 
 class VulnerabilityExplorer(MainExplorer):
+    """
+    Class inherit from MainExplorer 
+
+    Methods
+    ----------
+    explore(self, state)
+        public, main angr find function 
+
+    run(self)
+        public protected, run angr exploration
+
+    set_args(self, args)
+        public protected, set real angr function params
+
+    get_params_list(self, arg, size)
+        public, get list of params
+
+    _get_endianess(self, bv)
+        private protected, get endianess of binary
+
+    feed_function_state(self, params)
+        public protected, feed function with state
+
+    set_sim_manager(self, state)
+        public protected, set sim manager instance
+
+    check_buffer_overflow(self, params)
+        public, check if any function params was set to check for buffer overflow condition
+
+    _find_pattern(self, params, pattern)
+        private, check for string pattern occurance
+        
+    identify_overflow(self, found, registers=[], silence=True, *exclude)
+        private, check for buffer overflow condition
+
+    get_vuln_report(self, report):
+        private, get report of vulnerability
+    """
+    
     def __init__(self, bv, func_start_addr, func_end_addr, ld_path=None, use_system_libs=False):
         self.bv = bv
         self.func_start_addr = func_start_addr
@@ -711,6 +857,12 @@ class VulnerabilityExplorer(MainExplorer):
         self.proj.hook(self.func_end_addr, self.explore)
 
     def explore(self, state):
+        """
+        Parameters
+        ----------
+        state : angr SimState
+            current state of execution
+        """
         UIPlugin.color_path(self.bv, state.solver.eval(
             state.regs.pc, cast_to=int))
         if state.solver.eval(state.regs.pc, cast_to=int) == self.func_end_addr:
@@ -725,9 +877,19 @@ class VulnerabilityExplorer(MainExplorer):
             found = sm.found[0]
             print("found", found)
             if self.overflow:
-                self.identify_overflow(found, registers[self.bv.arch.name])
+                self._identify_overflow(found, registers[self.bv.arch.name])
 
     def set_args(self, args):
+        """
+        Parameters
+        ----------
+        args : list
+            list of parameters to be checked for pointer type
+        Return
+        ------
+            dictionary of angr mapped parameters
+        """
+
         counter = 0
         if args is not None:
             for item in args:
@@ -740,28 +902,71 @@ class VulnerabilityExplorer(MainExplorer):
         return self.args
 
     def get_params_list(self, args, size):
+        """
+        Parameters
+        ----------
+        args : list
+            list of parameters to be checked for pointer type
+        size: integer
+            number of args
+        Return
+        ------
+            list of function params named from agr0 to argX
+        """
+
         possible_args = ['arg'+str(x) for x in range(0, size)]
         func_params = []
         for item in possible_args:
             if args.get(item) != None:
                 func_params.append(args.get(item))
-        print("FUNC PARAMS", func_params)
         return func_params
 
-    def get_endianess(self, bv):
+    def _get_endianess(self, bv):
+        """
+        Parameters
+        ----------
+        args : BinaryView instance
+        """
+
         if bv.arch.endianness == 1:
             return 'big'
         return 'little'
 
     def feed_function_state(self, params):
+        """
+        Parameters
+        ----------
+        params : list
+            list of parameters to create function state
+        Return
+        ------
+           angr function SimState state
+        """
+
         self.state = self.proj.factory.call_state(
             self.func_start_addr, *params)
         return self.state
 
     def set_sim_manager(self, state):
+        """
+        Parameters
+        ----------
+        state : angr SimState
+            angr current SimState
+        """
+    
         self.simgr = self.proj.factory.simgr(self.state)
 
     def check_buffer_overflow(self, params):
+        """
+        Parameters
+        ----------
+        params : list
+            list of parameters to be checked for buffer overflow flag
+        Return
+        ------
+            True if any parameter was set to check buffer overflow condition
+        """
         if params:
             self.params = params
         counter = 0
@@ -775,14 +980,43 @@ class VulnerabilityExplorer(MainExplorer):
             self.overflow = False
             return self.overflow
 
-    def find_pattern(self, params, pattern):
+    def _find_pattern(self, params, pattern):
+        """
+        Parameters
+        ----------
+        params : list
+            list of parameters to be checked for pattern
+
+        pattern: string
+            pattern to be searched
+
+        Return
+        ------
+            True if pattern find
+        """
+
         for item in params:
             dest = item.get('value').encode()
             if pattern in dest:
                 return True
         return False
 
-    def identify_overflow(self, found, registers=[], silence=True, *exclude):
+    def _identify_overflow(self, found, registers=[], silence=True, *exclude):
+        """
+        Parameters
+        ----------
+        found : angr SimState 
+
+        registers: list
+            list of CPU registers for binary
+        
+        silence: boolean
+            if True log will display even if overflow not found
+
+        *exclude: variable list
+            list of CPU registers to exclude from overflow lookup
+        """
+
         data = []
         report = {}
         if(len(exclude) > 0):
@@ -791,7 +1025,7 @@ class VulnerabilityExplorer(MainExplorer):
             data = registers
         for arg in data:
             pattern = found.solver.eval(found.regs.get(arg), cast_to=bytes)
-            if self.find_pattern(self.params, pattern):
+            if self._find_pattern(self.params, pattern):
                 if(arg == 'ra' and cyclic_find(pattern.decode())):
                     binja.log_warn("[*] Buffer overflow detected !!!")
                     binja.log_warn(
@@ -810,6 +1044,18 @@ class VulnerabilityExplorer(MainExplorer):
                 "Vulnerability Info Report", self.get_vuln_report(report))
 
     def get_vuln_report(self, report):
+        """
+        Parameters
+        ----------
+        report : dictionary
+            holds data to be displayed for report
+
+        Return
+        ------
+            vulnerability report
+
+        """
+
         contents = "==== Vulnerability Report ====\r\n\n"
         for key, value in report.items():
             if(key == 'ra'):
