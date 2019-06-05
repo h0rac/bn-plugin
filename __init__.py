@@ -600,8 +600,8 @@ class BackgroundTaskManager():
     set_exploit_payload(self, init, payload)
         public, sets payload for JSONExploitCreator or FileCreator
     
-    def get_endianess(self, bv)
-        public, set endianness base on binary information
+    def _get_endianess(self, bv)
+        private protected, set endianness base on binary information
 
     vuln_explore(self,bv)
         public, create instance of VulnerabilityExplorer and pass to AngrRunner to execute
@@ -667,7 +667,7 @@ class BackgroundTaskManager():
         self.init = init
 
     @classmethod
-    def get_endianess(self, bv):
+    def _get_endianess(self, bv):
         """
         Parameters
         ----------
@@ -731,7 +731,7 @@ class BackgroundTaskManager():
         """
 
         try:
-            endian = BackgroundTaskManager.get_endianess(bv)
+            endian = BackgroundTaskManager._get_endianess(bv)
             start_addr = BackgroundTaskManager.start_addr
             end_addr = BackgroundTaskManager.end_addr
             ld_path = BackgroundTaskManager.ld_path
@@ -1086,7 +1086,7 @@ class ROPExplorer(MainExplorer):
         self.sleep = kwargs['sixth']
         self.state_history = collections.OrderedDict()
         self.payload = collections.OrderedDict()
-        self.endian = self.get_endianess(bv)
+        self.endian = self._get_endianess(bv)
 
         binja.log_info("Gadget 1 address: 0x{0:0x}".format(self.gadget1))
         binja.log_info("Gadget 2 address: 0x{0:0x}".format(self.gadget2))
@@ -1125,7 +1125,7 @@ class ROPExplorer(MainExplorer):
                     self.args[key] = value
         return self.args
 
-    def get_endianess(self, bv):
+    def _get_endianess(self, bv):
         if bv.arch.endianness == 1:
             return 'big'
         return 'little'
