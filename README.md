@@ -1,4 +1,4 @@
-# Explorer plugin works only on Linux !!! 
+# Explorer plugin support Linux and OS X
 Symbolic execution for static vulnerability assessment in firmware
 
 #### SUPPORTED FEATURES
