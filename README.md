@@ -1,4 +1,8 @@
 # Explorer plugin support Linux and OS X
+# Tested on Ubuntu 18.04 LTS and OS X Catalina 
+
+## For OS X you don't need to install virtualenv
+
 Symbolic execution for static vulnerability assessment in firmware
 
 #### SUPPORTED FEATURES
@@ -22,26 +26,6 @@ Symbolic execution for static vulnerability assessment in firmware
 ###### virtualenv -p /usr/bin/python3 angr
 
 ##### change path in binaryninja to point to python3 of your main os
-
-##### 4) Angr has some issues on virtualenv for python3. In order to solve that
-
-###### update ~/yourpath/angr/lib/python3.5/site-packages/cle/backends/binja.py
-
-###### line  if magic.startswith("SQLite format 3") and stream.name.endswith("bndb"):
-###### replace with if magic.startswith(b"SQLite format 3") and stream.name.endswith("bndb"):
-
-##### 5) update ~/yourpath/angr/lib/python3.5/site-packages/cle/backends/elf/metaelf.py
-
-###### with this changes https://github.com/angr/cle/commit/ff2bee1191885441fb2ebbfcae9aafca2eea69c6
-
-##### 6) to support pwntools inside virtualenv and binaryninja
-
-###### inside virtualenv pip install pwntools
-###### git clone https://github.com/arthaud/python3-pwntools
-###### cd python3-pwntools
-###### pip3 install -e .
-
-###### edit your .bashrc or .zshrc file with export PWNLIB_NOTERM=true
 
 
 ![Alt text](docs/images/set_start.png?raw=true "Set execution start address")
