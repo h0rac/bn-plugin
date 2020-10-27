@@ -13,7 +13,7 @@ chardet==3.0.4
 claripy==8.19.2.4
 cle==8.19.2.4
 cooldict==1.4
-cryptography==2.6.1
+cryptography==3.2
 decorator==4.4.0
 dpkt==1.9.2
 filebytes==0.9.18
