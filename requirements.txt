@@ -35,7 +35,7 @@ plumbum==1.6.7
 progressbar==2.5
 psutil==5.6.6
 -e git+https://github.com/arthaud/python3-pwntools@de2854460b30beb4909e5f87007258862338a456#egg=pwntools
-py==1.8.0
+py==1.10.0
 pyasn1==0.4.5
 pycparser==2.19
 pyelftools==0.25
