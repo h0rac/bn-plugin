@@ -613,7 +613,9 @@ class UIPlugin(PluginCommand):
             return
         # func_symbol = bv.get_symbol_by_raw_name("strcpy")
         # func_refs = [(ref.function, ref.address) for ref in bv.get_code_refs(func_symbol.address)]
-        func_refs = [ (ref.function, ref.address) for ref in bv.get_code_refs(bv.symbols[func.name].address)]
+        #func_refs = [ (ref.function, ref.address) for ref in bv.get_code_refs(bv.symbols[func.name].address)]
+        refs = [bv.get_code_refs(x.address) for x in bv.symbols.get(func.name)]
+        func_refs = [(item.function, item.address) for sublist in refs for item in sublist]
         print("func refs", func_refs)
         for function, addr in func_refs:
             try:
