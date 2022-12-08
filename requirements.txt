@@ -7,7 +7,7 @@ bcrypt==3.1.6
 bitstring==3.1.5
 cachetools==3.1.0
 capstone==4.0.1
-certifi==2019.3.9
+certifi==2022.12.7
 cffi==1.12.2
 chardet==3.0.4
 claripy==8.19.2.4
